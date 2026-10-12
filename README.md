@@ -5,3 +5,4 @@
 - Kacper - legnicki
 - Jan - miński
 - Dominik - koniński
+- Jakub - chełmski
