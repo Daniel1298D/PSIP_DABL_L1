@@ -2,3 +2,4 @@
 - Daniel - sochaczewski
 - Bartek - radomszczański
 - Stanisław - turecki
+- Marcin - miński
