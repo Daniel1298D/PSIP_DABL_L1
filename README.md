@@ -8,3 +8,4 @@
 - Jakub - chełmski
 - Tymoteusz - toruński
 - Julia - hajnowski
+- Marcin - miński
