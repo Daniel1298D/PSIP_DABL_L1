@@ -9,4 +9,6 @@
 - Tymoteusz - toruński
 - Julia - hajnowski
 - Marcin - miński
+- Michał - biłgorajski
+- Dawid - bocheński
 - Jan - warszawski
