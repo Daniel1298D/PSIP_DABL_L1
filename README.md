@@ -1,1 +1,12 @@
 # PSIP_DABL_L1
+- Daniel - sochaczewski
+- Bartek - radomszczański
+- Stanisław - turecki
+- Kacper - legnicki
+- Jan - miński
+- Dominik - koniński
+- Jakub - chełmski
+- Tymoteusz - toruński
+- Julia - hajnowski
+- Marcin - miński
+- Jan - warszawski
