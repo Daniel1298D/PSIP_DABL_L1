@@ -3,3 +3,4 @@
 - Bartek - radomszczański
 - Stanisław - turecki
 - Kacper - legnicki
+- Jan - miński
