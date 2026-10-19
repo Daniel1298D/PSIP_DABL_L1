@@ -12,3 +12,4 @@
 - Michał - biłgorajski
 - Dawid - bocheński
 - Jan - warszawski
+- Maciej - kutnowski
