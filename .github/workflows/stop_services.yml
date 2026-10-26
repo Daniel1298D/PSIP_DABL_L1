@@ -1,0 +1,60 @@
+name: Stop Remote Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to stop (containers and data are preserved)
+        required: true
+        default: env-test
+        type: choice
+        options:
+          - env-test
+          - env-qa
+          - main
+
+permissions:
+  contents: read
+
+jobs:
+  stop-db:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+    steps:
+      - name: Validate environment
+        shell: bash
+        run: |
+          case "$ENVIRONMENT" in
+            env-test|env-qa|main) ;;
+            *) echo "Unsupported environment" >&2; exit 1 ;;
+          esac
+
+      - name: Checkout environment configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.environment }}
+
+      - name: Stop PostGIS and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f docker-compose-remote.yml -p "remote-db-$ENVIRONMENT")
+          container_id=$("${compose[@]}" ps --all --quiet postgis)
+          if [ -z "$container_id" ]; then
+            echo "No PostGIS container exists for $ENVIRONMENT" >&2
+            exit 1
+          fi
+          "${compose[@]}" stop --timeout 30 postgis
+          state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+          test "$state" = exited
+          docker volume inspect "remote-db-$ENVIRONMENT-pgdata" >/dev/null
+          "${compose[@]}" ps --all
+          echo "Stopped $ENVIRONMENT; container and database volume preserved." >> "$GITHUB_STEP_SUMMARY"
