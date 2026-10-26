@@ -1,0 +1,56 @@
+name: Load H3 Grids
+
+on:
+  workflow_dispatch:
+    inputs:
+      resolutions:
+        description: Comma-separated H3 resolutions (0..10)
+        required: true
+        default: '6,7,8,9'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-h3-grids
+  cancel-in-progress: false
+
+jobs:
+  load-grid:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        environment: [env-test, env-qa, main]
+    environment:
+      name: ${{ matrix.environment }}
+    steps:
+      - name: Checkout generator and county data
+        uses: actions/checkout@v4
+
+      - name: Build data preparation image
+        run: docker build -t "psip-h3-loader:$GITHUB_SHA" -f docker/python/Dockerfile .
+
+      - name: Test generator
+        run: docker run --rm "psip-h3-loader:$GITHUB_SHA" python -m unittest discover -s /app/tests -v
+
+      - name: Load and validate county grids
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          H3_RESOLUTIONS: ${{ inputs.resolutions }}
+          TARGET_ENVIRONMENT: ${{ matrix.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network "remote-db-${TARGET_ENVIRONMENT}_default" \
+            -e PGHOST=postgis -e PGPORT=5432 \
+            -e POSTGRES_USER -e POSTGRES_PASSWORD -e POSTGRES_DB \
+            -e H3_RESOLUTIONS \
+            "psip-h3-loader:$GITHUB_SHA"
+          echo "Loaded and validated H3 grids for $TARGET_ENVIRONMENT." >> "$GITHUB_STEP_SUMMARY"
