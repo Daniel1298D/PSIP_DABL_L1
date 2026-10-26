@@ -1,0 +1,7 @@
+.git
+.idea
+.runner
+**/__pycache__
+**/*.pyc
+.env
+.env.*

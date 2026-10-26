@@ -1,4 +1,7 @@
 # PSIP_DABL_L1
+
+Instrukcja zadania 2: [generowanie i ładowanie siatek H3](docs/zadanie2.md).
+
 - Daniel - sochaczewski
 - Bartek - radomszczański
 - Stanisław - turecki
