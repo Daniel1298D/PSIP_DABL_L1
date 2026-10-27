@@ -27,8 +27,8 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
         original = load.generate_grid
 
-        def invalid_grid(*args):
-            for i, (res, cell, full, clipped) in enumerate(original(*args)):
+        def invalid_grid(*args, **kwargs):
+            for i, (res, cell, full, clipped) in enumerate(original(*args, **kwargs)):
                 yield res, cell, full, MultiPolygon() if i == 0 else clipped
 
         with patch.object(load, 'generate_grid', invalid_grid):
