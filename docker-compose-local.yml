@@ -1,5 +1,6 @@
 services:
   postgis:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: docker/postgis/Dockerfile

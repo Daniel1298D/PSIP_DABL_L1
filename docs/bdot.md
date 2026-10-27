@@ -81,3 +81,25 @@ WHERE f_table_schema IN ('bdot','grid','analysis','viz');
 
 W QGIS wczytaj warstwę `viz.h3_8`, wybierz styl stopniowany według `bubd_a`
 lub `skdr_l`. Tabela atrybutów zawiera komplet kolumn dla wszystkich klas.
+
+## Połączenia QGIS na tym komputerze
+
+Są to dwie różne bazy PostGIS, obie z bazą i użytkownikiem `psip`:
+
+| Połączenie QGIS | Port hosta | Przeznaczenie |
+|---|---:|---|
+| `[PSIP] local host` | 5444 | lokalny kontener `l1-postgis-1` i jego wolumen `l1_pgdata` |
+| `[PSIP] env-test` | 5434 | środowisko testowe z danymi BDOT, siatką i agregacjami |
+
+Lokalną bazę uruchamia polecenie `docker compose -f docker-compose-local.yml -p l1 up -d --wait`.
+Kontener ma ustawione ponowne uruchamianie po starcie Dockera, o ile nie został
+zatrzymany ręcznie. Sama baza lokalna nie przechowuje wyników BDOT z `env-test`.
+
+Projekt QGIS z bezpośrednim źródłem PostgreSQL można wygenerować poleceniem
+`python-qgis.bat app/python/qgis_live_project.py --output WYNIK.qgz --profile-ini PROFIL_QGIS3.ini`
+po ustawieniu zmiennej `PGPASSWORD`. Skrypt zapisuje połączenie `[PSIP] env-test`
+bez zmiany `[PSIP] local host` i otwiera warstwy `viz.h3_7`, `viz.h3_8`,
+`viz.h3_9` oraz granicę `grid.powiat` z bazy na porcie 5434. Projekt wyświetla
+mapę w EPSG:3857; baza przechowuje surowe dane i agregacje w EPSG:2180.
+Hasło zapisane przez QGIS w profilu i projekcie jest jawnym tekstem — tak samo
+jak w standardowym połączeniu z zaznaczoną opcją „Zapisz hasło”.
