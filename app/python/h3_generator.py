@@ -8,6 +8,7 @@ import h3
 from osgeo import gdal, ogr, osr
 from shapely.geometry import MultiPolygon, Polygon, mapping, shape
 from shapely.ops import unary_union
+from shapely.wkb import loads as load_wkb
 
 DEFAULT_RESOLUTIONS = (6, 7, 8, 9)
 
@@ -66,20 +67,34 @@ def polygon_parts(geometry):
     return []
 
 
-def generate_grid(county, resolutions=DEFAULT_RESOLUTIONS):
+def project_geometry(geometry, source_epsg=4326, target_epsg=2180):
+    source, target = osr.SpatialReference(), osr.SpatialReference()
+    source.ImportFromEPSG(source_epsg)
+    target.ImportFromEPSG(target_epsg)
+    for crs in (source, target):
+        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    raw = ogr.CreateGeometryFromWkb(geometry.wkb)
+    raw.Transform(osr.CoordinateTransformation(source, target))
+    return load_wkb(bytes(raw.ExportToWkb()))
+
+
+def generate_grid(county, resolutions=DEFAULT_RESOLUTIONS, output_epsg=4326):
     """Yield (resolution, H3 id, full polygon, clipped multipolygon).
 
     Overlap mode includes boundary cells even with centers outside the county.
     GeoJSON uses longitude/latitude; H3 boundaries use latitude/longitude.
     """
     h3_shape = h3.geo_to_h3shape(mapping(county))
+    clip_county = county if output_epsg == 4326 else project_geometry(county, target_epsg=output_epsg)
     for resolution in resolutions:
         cells = sorted(h3.h3shape_to_cells_experimental(h3_shape, resolution, contain='overlap'))
         if not cells:
             raise ValueError(f'No cells generated for resolution {resolution}')
         for cell in cells:
             full = Polygon([(lng, lat) for lat, lng in h3.cell_to_boundary(cell)])
-            clipped_parts = polygon_parts(full.intersection(county))
+            if output_epsg != 4326:
+                full = project_geometry(full, target_epsg=output_epsg)
+            clipped_parts = polygon_parts(full.intersection(clip_county))
             if clipped_parts:
                 yield resolution, cell, full, MultiPolygon(clipped_parts)
 

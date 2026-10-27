@@ -1,0 +1,42 @@
+name: Import and Aggregate BDOT Warsaw
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bdot-env-test
+  cancel-in-progress: false
+
+jobs:
+  bdot:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    environment: env-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build processing image
+        run: docker build -t "psip-bdot:$GITHUB_SHA" -f docker/python/Dockerfile .
+      - name: Test geometry algorithms
+        run: docker run --rm "psip-bdot:$GITHUB_SHA" python -m unittest discover -s /app/tests -v
+      - name: Import all BDOT classes and aggregate test environment
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker start remote-db-env-test-postgis-1
+          options=(--rm --network remote-db-env-test_default
+            -e TARGET_ENVIRONMENT=env-test -e PGHOST=postgis
+            -e POSTGRES_USER -e POSTGRES_PASSWORD -e POSTGRES_DB)
+          docker run "${options[@]}" -e RUN_BDOT_INTEGRATION=1 "psip-bdot:$GITHUB_SHA" \
+            python -m unittest discover -s /app/tests -p test_bdot_metrics.py -v
+          docker run "${options[@]}" -v psip-bdot-cache:/cache "psip-bdot:$GITHUB_SHA" \
+            python -m python.load_bdot
+          docker run "${options[@]}" "psip-bdot:$GITHUB_SHA" python -m python.aggregate_bdot
+          docker run "${options[@]}" "psip-bdot:$GITHUB_SHA" python -m python.validate_bdot
+          echo 'BDOT imported; H3 7/8/9 aggregated and conservation checks passed in EPSG:2180. Views viz.h3_7/8/9 use EPSG:3857.' >> "$GITHUB_STEP_SUMMARY"

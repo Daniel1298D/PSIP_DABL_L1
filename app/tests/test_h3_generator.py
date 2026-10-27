@@ -4,7 +4,7 @@ import h3
 from shapely.geometry import MultiPolygon, Polygon, box
 from shapely.ops import unary_union
 
-from python.h3_generator import generate_grid, parse_resolutions, read_county
+from python.h3_generator import generate_grid, parse_resolutions, read_county, project_geometry
 
 
 class GridTests(unittest.TestCase):
@@ -34,6 +34,14 @@ class GridTests(unittest.TestCase):
         for value in ('', 'abc', '-1', '11', '6,,7'):
             with self.assertRaises(ValueError):
                 parse_resolutions(value)
+
+    def test_clipping_in_metric_crs(self):
+        county = read_county('/data/powiat.shp')
+        metric = project_geometry(county)
+        rows = list(generate_grid(county, [7], output_epsg=2180))
+        covered = unary_union([row[3] for row in rows])
+        self.assertGreater(metric.area, 500_000_000)
+        self.assertLess(metric.symmetric_difference(covered).area, 0.01)
 
     def test_actual_county_transformation_and_coverage(self):
         county = read_county('/data/powiat.shp')

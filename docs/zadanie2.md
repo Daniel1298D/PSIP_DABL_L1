@@ -17,7 +17,12 @@ Skrypt i dane są kopiowane do obrazu podczas budowania. Nie używamy podmontowa
 
 ## Wynik w każdej bazie
 
-- `grid.powiat` — połączona geometria obszaru źródłowego w EPSG:4326.
+Aktualizacja BDOT: loader zapisuje teraz geometrie w **EPSG:2180** i wykonuje
+przycięcia w tym układzie. Starsze tabele 4326 są migrowane podczas uruchomienia.
+Migrację w ramach rozszerzenia BDOT wykonano tylko w `env-test`.
+Zasady analizy i widoki wizualizacyjne EPSG:3857 opisano w [bdot.md](bdot.md).
+
+- `grid.powiat` — połączona geometria obszaru źródłowego w EPSG:2180.
 - `grid.h3_cells` — komórki wszystkich wybranych rozdzielczości:
   `resolution`, `h3_index`, `geom` (pełny heksagon), `geom_clipped`
   (część w granicach powiatu), `area_m2` (pole części przyciętej w EPSG:2180).
