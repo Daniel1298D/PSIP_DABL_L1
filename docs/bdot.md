@@ -82,6 +82,10 @@ WHERE f_table_schema IN ('bdot','grid','analysis','viz');
 W QGIS wczytaj warstwę `viz.h3_8`, wybierz styl stopniowany według `bubd_a`
 lub `skdr_l`. Tabela atrybutów zawiera komplet kolumn dla wszystkich klas.
 
+Kolejny etap — normalizacja, wagi i IOP — opisano w [iop.md](iop.md).
+Wynikowe tabele tego etapu to `analysis.iop_h3_7/8/9`, a widoki mapowe
+to `viz.iop_h3_7/8/9`.
+
 ## Połączenia QGIS na tym komputerze
 
 Są to dwie różne bazy PostGIS, obie z bazą i użytkownikiem `psip`:

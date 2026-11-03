@@ -1,0 +1,65 @@
+name: Verify IOP (QA)
+
+on:
+  push:
+    branches: [env-qa]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-iop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-iop:
+    if: github.ref_name == 'env-qa'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build processing and temporary PostGIS images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t "psip-iop:$GITHUB_SHA" -f docker/python/Dockerfile .
+          docker build -t "psip-iop-postgis:$GITHUB_SHA" -f docker/postgis/Dockerfile .
+
+      - name: Verify code in an isolated temporary database
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_container="iop-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ci_network="$ci_container"
+          cleanup() {
+            docker rm -f "$ci_container" >/dev/null 2>&1 || true
+            docker network rm "$ci_network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$ci_network" >/dev/null
+          docker run -d --name "$ci_container" \
+            --network "$ci_network" --network-alias postgis \
+            --tmpfs /var/lib/postgresql/data \
+            -e POSTGRES_USER=iop_ci -e POSTGRES_PASSWORD=iop_ci \
+            -e POSTGRES_DB=iop_ci "psip-iop-postgis:$GITHUB_SHA"
+          ready=0
+          for ((attempt=1; attempt<=60; attempt++)); do
+            if docker exec "$ci_container" pg_isready -h 127.0.0.1 -U iop_ci -d iop_ci >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs "$ci_container"
+            exit 1
+          fi
+          docker run --rm --network "$ci_network" \
+            -e PGHOST=postgis -e PGPORT=5432 \
+            -e POSTGRES_USER=iop_ci -e POSTGRES_PASSWORD=iop_ci -e POSTGRES_DB=iop_ci \
+            -e TARGET_ENVIRONMENT=env-test \
+            -e RUN_BDOT_INTEGRATION=1 -e RUN_IOP_INTEGRATION=1 \
+            "psip-iop:$GITHUB_SHA" python -m unittest discover -s /app/tests -v
+          echo 'IOP code and PostGIS fixtures passed in an isolated temporary database. No project data were copied to QA.' >> "$GITHUB_STEP_SUMMARY"
