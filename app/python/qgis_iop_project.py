@@ -16,31 +16,40 @@ from qgis.PyQt.QtGui import QColor, QImage, QPainter, QFont
 from qgis.core import (
     QgsApplication, QgsClassificationEqualInterval, QgsCoordinateReferenceSystem,
     QgsCoordinateTransform, QgsDataSourceUri, QgsFeatureRequest, QgsFillSymbol,
-    QgsGradientColorRamp, QgsGraduatedSymbolRenderer, QgsLayerTreeModel,
+    QgsGradientColorRamp, QgsGradientStop, QgsGraduatedSymbolRenderer, QgsLayerTreeModel,
     QgsMapRendererParallelJob, QgsMapSettings, QgsMapThemeCollection, QgsProject,
     QgsProviderRegistry, QgsReferencedRectangle, QgsRendererRange, QgsVectorLayer,
-    QgsWkbTypes,
+    QgsWkbTypes, QgsProperty, QgsSymbolLayer, QgsExpression, QgsExpressionContext, QgsFeature,
 )
 
 
 def renderer(lower: Decimal, upper: Decimal, classes: int):
-    """Use equal numeric intervals and equally spaced colors, including red/white."""
+    """Equal intervals on a symmetric red/white/green scale, with exact white at zero."""
+    if lower >= 0 or upper != -lower:
+        raise ValueError('The diverging scale must be symmetric around zero')
     step = (upper - lower) / classes
-    ramp = QgsGradientColorRamp(QColor('#ff0000'), QColor('#ffffff'))
+    ramp = QgsGradientColorRamp(QColor('#ff0000'), QColor('#008000'), False,
+                                [QgsGradientStop(0.5, QColor('#ffffff'))])
     ranges = []
     for i in range(classes):
         start, end = lower + i * step, lower + (i + 1) * step
         color = ramp.color(i / (classes - 1))
         symbol = QgsFillSymbol.createSimple({
-            'color': color.name(), 'outline_color': '#a36c6c', 'outline_width': '0.025',
+            'color': color.name(), 'outline_color': '#b3b3b3', 'outline_width': '0.025',
         })
+        # Zero is a class boundary for an even class count. Override its fill so
+        # it is exactly white whichever adjoining interval QGIS selects.
+        expression = f'''CASE WHEN "iop" = 0 THEN '#ffffff' ELSE '{color.name()}' END'''
+        symbol.symbolLayer(0).setDataDefinedProperty(
+            QgsSymbolLayer.PropertyFillColor, QgsProperty.fromExpression(expression))
         label = f'{start:+.3f} — {end:+.3f}'.replace('.', ',')
         ranges.append(QgsRendererRange(float(start), float(end), symbol, label))
     result = QgsGraduatedSymbolRenderer('iop', ranges)
     result.setClassificationMethod(QgsClassificationEqualInterval())
     result.updateColorRamp(ramp)
     assert result.ranges()[0].symbol().color().name() == '#ff0000'
-    assert result.ranges()[-1].symbol().color().name() == '#ffffff'
+    assert result.sourceColorRamp().color(0.5).name() == '#ffffff'
+    assert result.ranges()[-1].symbol().color().name() == '#008000'
     return result
 
 
@@ -58,7 +67,7 @@ def main():
     app = QgsApplication([], False)
     app.initQgis()
     project = QgsProject.instance()
-    project.setTitle('Warszawa — IOP H3 7, 8, 9 — PostgreSQL')
+    project.setTitle('Warszawa — IOP H3 7, 8, 9 — czerwony, biały, zielony — PostgreSQL')
     crs = QgsCoordinateReferenceSystem('EPSG:3857')
     project.setCrs(crs)
     project.setBackgroundColor(QColor('white'))
@@ -75,7 +84,7 @@ def main():
         return result
 
     root = project.layerTreeRoot()
-    full = root.addGroup('IOP | skala −1…+1 | równe przedziały co 0,01')
+    full = root.addGroup('IOP | skala −1…+1 | 0=biały | krok 0,01')
     detail = root.addGroup('IOP | szczegóły | wspólna skala z zakresu danych')
     layers = {'full': {}, 'detail': {}}
     summary = {}
@@ -90,14 +99,13 @@ def main():
         summary[resolution] = {'rows': len(values), 'min': min(values), 'max': max(values)}
         item.setRenderer(renderer(Decimal('-1'), Decimal('1'), 200))
         layers['full'][resolution] = item
-    detail_lower = Decimal(str(math.floor(minimum * 100) / 100))
-    detail_upper = Decimal(str(math.ceil(maximum * 100) / 100))
-    if detail_lower == detail_upper:
-        detail_upper += Decimal('0.01')
-    detail.setName(f'IOP | szczegóły {detail_lower}…{detail_upper} | 20 równych przedziałów')
+    detail_limit = max(Decimal('0.01'), Decimal(str(math.ceil(max(abs(minimum), abs(maximum)) * 100) / 100)))
+    detail_lower, detail_upper = -detail_limit, detail_limit
+    detail_classes = int((detail_upper - detail_lower) / Decimal('0.005'))
+    detail.setName(f'IOP | szczegóły {detail_lower}…+{detail_upper} | 0=biały | krok 0,005')
     for resolution in (7, 8, 9):
         layers['detail'][resolution] = layer(f'iop_h3_{resolution}', f'H3 {resolution} — IOP — PostgreSQL')
-        layers['detail'][resolution].setRenderer(renderer(detail_lower, detail_upper, 20))
+        layers['detail'][resolution].setRenderer(renderer(detail_lower, detail_upper, detail_classes))
     for mode, group in [('full', full), ('detail', detail)]:
         for resolution in (7, 8, 9):
             item = layers[mode][resolution]
@@ -145,9 +153,9 @@ def main():
             select(mode, resolution)
             project.mapThemeCollection().insert(f'H3 {resolution} | {scale_name}',
                 QgsMapThemeCollection.createThemeFromCurrentState(root, model))
-    select('full', 8)
-    full.setExpanded(True)
-    detail.setExpanded(False)
+    select('detail', 8)
+    full.setExpanded(False)
+    detail.setExpanded(True)
 
     # The project itself is stored in PostgreSQL, not just its spatial layers.
     connection_uri = QgsDataSourceUri()
@@ -173,17 +181,29 @@ def main():
     for item in restored:
         ranges = item.renderer().ranges()
         mode = item.customProperty('iop_display_scale')
-        expected = (-1., 1., 200) if mode == 'full' else (float(detail_lower), float(detail_upper), 20)
+        expected = (-1., 1., 200) if mode == 'full' else (float(detail_lower), float(detail_upper), detail_classes)
         if (ranges[0].lowerValue(), ranges[-1].upperValue(), len(ranges)) != expected:
             raise RuntimeError('Stored classification changed')
-        if ranges[0].symbol().color().name() != '#ff0000' or ranges[-1].symbol().color().name() != '#ffffff':
+        if ranges[0].symbol().color().name() != '#ff0000' or ranges[-1].symbol().color().name() != '#008000':
             raise RuntimeError('Stored endpoint colors changed')
+        if item.renderer().sourceColorRamp().color(0.5).name() != '#ffffff':
+            raise RuntimeError('The zero color anchor must be white')
+        zero = QgsFeature(item.fields())
+        zero['iop'] = 0.0
+        context = QgsExpressionContext()
+        context.setFields(item.fields())
+        context.setFeature(zero)
+        touching_zero = [r for r in ranges if r.lowerValue() <= 0 <= r.upperValue()]
+        for interval in touching_zero:
+            prop = interval.symbol().symbolLayer(0).dataDefinedProperties().property(QgsSymbolLayer.PropertyFillColor)
+            if not prop.isActive() or QgsExpression(prop.expressionString()).evaluate(context) != '#ffffff':
+                raise RuntimeError('An IOP of exactly zero must render white')
         step = (expected[1] - expected[0]) / expected[2]
         if any(abs(r.upperValue() - r.lowerValue() - step) > 1e-12 for r in ranges):
             raise RuntimeError('Intervals are not equal')
     visible_maps = [l for l in restored if project.layerTreeRoot().findLayer(l.id()).isVisible()]
-    if len(visible_maps) != 1 or not visible_maps[0].name().startswith('H3 8 ') or visible_maps[0].customProperty('iop_display_scale') != 'full':
-        raise RuntimeError('Default view must show H3 8 with the full -1..1 scale')
+    if len(visible_maps) != 1 or not visible_maps[0].name().startswith('H3 8 ') or visible_maps[0].customProperty('iop_display_scale') != 'detail':
+        raise RuntimeError('Default view must show H3 8 with the detailed scale')
 
     if args.preview_dir:
         args.preview_dir.mkdir(parents=True, exist_ok=True)
@@ -223,8 +243,9 @@ def main():
         'project_name': args.project_name, 'data_provider': 'postgres', 'host': args.host,
         'port': args.port, 'crs': project.crs().authid(), 'layers': summary,
         'main_scale': {'min': -1, 'max': 1, 'classes': 200, 'interval': .01},
-        'optional_detail_scale': {'min': str(detail_lower), 'max': str(detail_upper), 'classes': 20},
-        'endpoint_colors': ['#ff0000', '#ffffff'], 'default_view': 'H3 8 | -1..1',
+        'detail_scale': {'min': str(detail_lower), 'max': str(detail_upper), 'classes': detail_classes, 'interval': .005},
+        'color_anchors': {'negative': '#ff0000', 'zero': '#ffffff', 'positive': '#008000'},
+        'default_view': 'H3 8 | detailed scale', 'exact_zero_color_verified': True,
         'round_trip_validation': True}, ensure_ascii=False, indent=2))
 
 

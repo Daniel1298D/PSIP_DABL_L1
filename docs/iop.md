@@ -161,23 +161,28 @@ Projekt i jego style są w bazie; nie ma zależności od lokalnego GeoPackage
 ani projektu `.qgz`. Do uruchomienia skryptu potrzebne jest `PGPASSWORD`.
 
 Skala główna jest identyczna dla H3 7, 8 i 9: **[-1,+1]**, 200 równych
-przedziałów o szerokości **0,01**, liniowo rozmieszczone kolory od czerwieni
-`#ff0000` do bieli `#ffffff`. Skrajne przedziały mają dokładnie kolory końcowe.
-Przy obecnych wartościach bliskich zera kolory skali głównej są podobne.
+przedziałów o szerokości **0,01**. Kolory: **-1 — czerwony `#ff0000`,
+0 — biały `#ffffff`, +1 — zielony `#008000`**. Rampa jest liniowa osobno
+od czerwieni do bieli i od bieli do zieleni. Wartość dokładnie 0 ma jawne
+ustawienie białego wypełnienia, również gdy leży na wspólnej granicy klas.
+Przy obecnych wartościach bliskich zera kolory skali głównej są bardzo jasne.
 
-Dodatkowa, domyślnie wyłączona grupa „szczegóły” ma wspólną skalę
-**[-0,07,+0,03]**, 20 równych przedziałów o szerokości **0,005**.
+Dodatkowa grupa „szczegóły” ma wspólną, symetryczną względem zera skalę
+**[-0,07,+0,07]**, 28 równych przedziałów o szerokości **0,005**.
 To wyłącznie inny sposób kolorowania tej samej kolumny `iop`; nie zmienia
 wartości indeksu i nie stanowi skali [-1,+1]. W tym wariancie czerwony
-odpowiada dolnemu końcowi skali szczegółowej, a biały górnemu.
+odpowiada -0,07, biały nadal dokładnie 0, a zielony +0,07.
+Symetria pozwala porównywać siłę ujemnych i dodatnich wartości tą samą skalą.
 
 W każdej grupie można przełączać H3 7/8/9, wybierając jedną siatkę naraz.
 Projekt ma również sześć motywów mapy: po jednym dla każdej kombinacji
-rozdzielczości i skali. Domyślny widok to H3 8 ze skalą główną [-1,+1].
+rozdzielczości i skali. Domyślny widok to H3 8 ze skalą szczegółową,
+aby różnice były widoczne od razu po otwarciu projektu.
 Geometrie analityczne pozostają w EPSG:2180, prezentacja jest w EPSG:3857.
 
 Skrypt sprawdza projekt po ponownym odczytaniu z bazy: źródła PostgreSQL,
-poprawność warstw, liczbę klas, równość przedziałów i kolory końcowe.
+poprawność warstw, liczbę klas, równość przedziałów, kolory końcowe
+oraz białe wypełnienie dla obiektu o IOP równym dokładnie 0.
 Opcjonalny `--preview-dir` zapisuje obrazy kontrolne renderowane z bazy;
 obrazy nie są źródłem danych dla projektu QGIS.
 
