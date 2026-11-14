@@ -14,43 +14,18 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QImage, QPainter, QFont
 from qgis.core import (
-    QgsApplication, QgsClassificationEqualInterval, QgsCoordinateReferenceSystem,
+    QgsApplication, QgsCoordinateReferenceSystem,
     QgsCoordinateTransform, QgsDataSourceUri, QgsFeatureRequest, QgsFillSymbol,
-    QgsGradientColorRamp, QgsGradientStop, QgsGraduatedSymbolRenderer, QgsLayerTreeModel,
+    QgsLayerTreeModel,
     QgsMapRendererParallelJob, QgsMapSettings, QgsMapThemeCollection, QgsProject,
-    QgsProviderRegistry, QgsReferencedRectangle, QgsRendererRange, QgsVectorLayer,
-    QgsWkbTypes, QgsProperty, QgsSymbolLayer, QgsExpression, QgsExpressionContext, QgsFeature,
+    QgsProviderRegistry, QgsReferencedRectangle, QgsVectorLayer,
+    QgsWkbTypes, QgsSymbolLayer, QgsExpression, QgsExpressionContext, QgsFeature,
 )
 
-
-def renderer(lower: Decimal, upper: Decimal, classes: int):
-    """Equal intervals on a symmetric red/white/green scale, with exact white at zero."""
-    if lower >= 0 or upper != -lower:
-        raise ValueError('The diverging scale must be symmetric around zero')
-    step = (upper - lower) / classes
-    ramp = QgsGradientColorRamp(QColor('#ff0000'), QColor('#008000'), False,
-                                [QgsGradientStop(0.5, QColor('#ffffff'))])
-    ranges = []
-    for i in range(classes):
-        start, end = lower + i * step, lower + (i + 1) * step
-        color = ramp.color(i / (classes - 1))
-        symbol = QgsFillSymbol.createSimple({
-            'color': color.name(), 'outline_color': '#b3b3b3', 'outline_width': '0.025',
-        })
-        # Zero is a class boundary for an even class count. Override its fill so
-        # it is exactly white whichever adjoining interval QGIS selects.
-        expression = f'''CASE WHEN "iop" = 0 THEN '#ffffff' ELSE '{color.name()}' END'''
-        symbol.symbolLayer(0).setDataDefinedProperty(
-            QgsSymbolLayer.PropertyFillColor, QgsProperty.fromExpression(expression))
-        label = f'{start:+.3f} — {end:+.3f}'.replace('.', ',')
-        ranges.append(QgsRendererRange(float(start), float(end), symbol, label))
-    result = QgsGraduatedSymbolRenderer('iop', ranges)
-    result.setClassificationMethod(QgsClassificationEqualInterval())
-    result.updateColorRamp(ramp)
-    assert result.ranges()[0].symbol().color().name() == '#ff0000'
-    assert result.sourceColorRamp().color(0.5).name() == '#ffffff'
-    assert result.ranges()[-1].symbol().color().name() == '#008000'
-    return result
+if __package__:
+    from .iop_style import renderer
+else:
+    from iop_style import renderer
 
 
 def main():
