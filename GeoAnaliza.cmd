@@ -13,7 +13,7 @@ set "QT_PLUGIN_PATH=%OSGEO4W_ROOT%\apps\qgis\qtplugins;%OSGEO4W_ROOT%\apps\qt5\p
 set "PYTHONPATH=%OSGEO4W_ROOT%\apps\qgis\python;%PYTHONPATH%"
 set "GDAL_FILENAME_IS_UTF8=YES"
 if /I "%~1"=="--validate" goto validate
-start "GeoAnaliza" /MAX "%OSGEO4W_ROOT%\bin\pythonw.exe" "%~dp0app\desktop_main.py"
+start "QGIS PRO" /MAX "%OSGEO4W_ROOT%\bin\pythonw.exe" "%~dp0app\desktop_main.py"
 endlocal
 exit /b 0
 

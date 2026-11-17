@@ -10,9 +10,12 @@ from qgis.core import (
     Qgis, QgsLayout, QgsLayoutExporter, QgsLayoutItemLabel, QgsLayoutItemMap, QgsLayoutItemPage,
     QgsLayoutPoint, QgsLayoutSize, QgsProject,
 )
+from python.iop_style import DEFAULT_IOP_COLORS
+
+from . import APP_NAME
 
 
-def export_map_pdf(canvas, destination, *, iop_limits=None):
+def export_map_pdf(canvas, destination, *, iop_limits=None, iop_colors=DEFAULT_IOP_COLORS):
     destination = Path(destination)
     layers = canvas.layers()
     extent = canvas.extent()
@@ -41,7 +44,7 @@ def export_map_pdf(canvas, destination, *, iop_limits=None):
         item.attemptMove(QgsLayoutPoint(x, y))
         item.attemptResize(QgsLayoutSize(width, height))
 
-    caption('GeoAnaliza | Mapa przejezdności', 10, 6, 215, 11, size=16, bold=True)
+    caption(f'{APP_NAME} | Mapa przejezdności', 10, 6, 215, 11, size=16, bold=True)
     caption(f'{len(layers)} widoczne warstwy · {canvas.mapSettings().destinationCrs().authid()}',
             10, 17, 215, 7)
     map_top = 28
@@ -67,13 +70,13 @@ def export_map_pdf(canvas, destination, *, iop_limits=None):
     if iop_limits is not None:
         caption('Skala IOP', 10, 189, 28, 9, bold=True)
         low, high = iop_limits
-        for index, (color, value) in enumerate((('#ff0000', low), ('#ffffff', 0), ('#008000', high))):
+        for index, (color, value) in enumerate(zip(iop_colors, (low, 0, high))):
             x = 40 + index * 42
             caption('', x, 191, 7, 5, background=color)
             caption(f'{value:g}'.replace('.', ','), x + 8, 189, 30, 9)
     scale = f'{round(item.scale()):,}'.replace(',', ' ')
     caption(f'Skala wydruku 1 : {scale}', 195, 189, 92, 9, align=Qt.AlignRight)
-    caption('GeoAnaliza · PSIP', 10, 199, 140, 6, size=8)
+    caption(f'{APP_NAME} · PSIP', 10, 199, 140, 6, size=8)
 
     settings = QgsLayoutExporter.PdfExportSettings()
     settings.forceVectorOutput = True

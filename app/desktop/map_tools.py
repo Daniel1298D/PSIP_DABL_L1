@@ -4,7 +4,7 @@ from qgis.PyQt.QtCore import QPoint, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsDistanceArea, QgsGeometry, QgsPointXY, QgsProject, QgsWkbTypes
-from qgis.gui import QgsMapToolEmitPoint, QgsMapToolPan, QgsRubberBand, QgsVertexMarker
+from qgis.gui import QgsMapTool, QgsMapToolEmitPoint, QgsMapToolPan, QgsRubberBand, QgsVertexMarker
 
 
 class InspectPanTool(QgsMapToolPan):
@@ -13,6 +13,9 @@ class InspectPanTool(QgsMapToolPan):
     def __init__(self, canvas):
         super().__init__(canvas)
         self.start = None
+
+    def flags(self):
+        return super().flags() & ~QgsMapTool.ShowContextMenu
 
     def canvasPressEvent(self, event):
         if event.button() == Qt.LeftButton:

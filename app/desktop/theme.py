@@ -33,7 +33,10 @@ def stylesheet(c):
     QWidget {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 14px; }}
     QMainWindow, #Root, QDialog {{ background: {c['bg']}; }}
     #Header {{ background: {c['surface']}; border-bottom: 1px solid {c['border']}; }}
+    QToolBar#MapTools {{ background: {c['panel']}; border: 0; border-bottom: 1px solid {c['border']}; padding: 5px; spacing: 4px; }}
+    QToolBar#MapTools::separator {{ width: 1px; background: {c['border']}; margin: 5px 7px; }}
     #Sidebar {{ background: {c['surface']}; border-right: 1px solid {c['border']}; }}
+    #LayersSidebar {{ background: {c['surface']}; border-left: 1px solid {c['border']}; }}
     #MapFrame {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 12px; }}
     #MapHeader {{ background: {c['surface']}; border-bottom: 1px solid {c['border']}; }}
     #MeasurePanel {{ background: {c['soft']}; border-bottom: 1px solid {c['border']}; }}
@@ -57,7 +60,6 @@ def stylesheet(c):
     QPushButton:focus, QToolButton:focus, QComboBox:focus {{ border: 2px solid {c['accent']}; }}
     QPushButton#LayerCard {{ text-align: left; padding: 12px 16px; font-size: 14px; font-weight: 500; background: {c['panel']}; }}
     QPushButton#LayerCard:checked {{ background: {c['soft']}; color: {c['accent']}; border: 2px solid {c['accent']}; font-weight: 650; }}
-    QPushButton#ThemeButton {{ background: {c['panel']}; min-width: 122px; }}
     QPushButton:checked {{ background: {c['soft']}; color: {c['accent']}; border-color: {c['accent']}; }}
     QTabBar::tab {{ background: {c['surface']}; color: {c['muted']}; padding: 8px 13px; }}
     QTabBar::tab:selected {{ color: {c['accent']}; border-bottom: 2px solid {c['accent']}; }}
@@ -65,12 +67,15 @@ def stylesheet(c):
     QListWidget::item, QMenu::item {{ padding: 7px; }}
     QListWidget::item:selected, QMenu::item:selected {{ background: {c['soft']}; color: {c['text']}; }}
     QToolButton {{ padding: 0; min-width: 34px; min-height: 34px; font-size: 20px; }}
+    #MapTools QToolButton {{ min-width: 0; min-height: 0; border-radius: 4px; }}
+    #MapTools QToolButton:checked {{ background: {c['soft']}; border-color: {c['accent']}; }}
+    #MapTools QToolButton:disabled {{ background: {c['panel']}; border-color: {c['border']}; }}
     QComboBox {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 9px 12px; }}
     QComboBox::drop-down {{ border: none; width: 25px; }}
     QComboBox QAbstractItemView {{ background: {c['surface']}; color: {c['text']}; selection-background-color: {c['soft']}; selection-color: {c['text']}; padding: 5px; }}
     QLineEdit, QDoubleSpinBox {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 7px; }}
     QLineEdit:focus, QDoubleSpinBox:focus {{ border-color: {c['accent']}; }}
-    QTableWidget {{ background: {c['surface']}; border: 1px solid {c['border']}; gridline-color: {c['border']}; selection-background-color: {c['soft']}; selection-color: {c['text']}; }}
+    QTableView {{ background: {c['surface']}; border: 1px solid {c['border']}; gridline-color: {c['border']}; selection-background-color: {c['soft']}; selection-color: {c['text']}; }}
     QHeaderView::section {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 6px; }}
     QSlider::groove:horizontal {{ height: 6px; border-radius: 3px; background: {c['border']}; }}
     QSlider::handle:horizontal {{ width: 17px; margin: -6px 0; border-radius: 8px; background: {c['accent']}; }}

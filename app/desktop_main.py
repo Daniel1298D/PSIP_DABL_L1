@@ -1,9 +1,11 @@
-"""Launch GeoAnaliza as its own desktop application, without opening QGIS."""
+"""Launch QGIS PRO as a standalone desktop application."""
 import argparse
 import json
 import os
 from pathlib import Path
 import sys
+
+from desktop import APP_ICON, APP_NAME
 
 
 def main():
@@ -14,12 +16,14 @@ def main():
         os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from qgis.core import QgsApplication
     from qgis.PyQt.QtCore import Qt
-    from qgis.PyQt.QtGui import QFont
+    from qgis.PyQt.QtGui import QFont, QIcon
     QgsApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     QgsApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     app = QgsApplication([], True)
     app.setOrganizationName('PSIP')
     app.setApplicationName('GeoAnaliza')
+    app.setApplicationDisplayName(APP_NAME)
+    app.setWindowIcon(QIcon(str(APP_ICON)))
     app.setStyle('Fusion')
     app.setFont(QFont('Segoe UI', 10))
     app.initQgis()
@@ -60,5 +64,5 @@ if __name__ == '__main__':
         folder = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GeoAnaliza'
         folder.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(filename=folder / 'startup.log', level=logging.ERROR, encoding='utf-8')
-        logging.exception('GeoAnaliza startup failed')
+        logging.exception('%s startup failed', APP_NAME)
         raise

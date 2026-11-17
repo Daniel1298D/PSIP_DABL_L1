@@ -1,4 +1,4 @@
-"""GeoAnaliza window, session, map and analytical tools."""
+"""Desktop window, session, map and analytical tools."""
 import os
 from pathlib import Path
 import sys
@@ -8,11 +8,14 @@ from qgis.PyQt.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPixmap, Q
 from qgis.PyQt.QtSvg import QSvgRenderer
 from qgis.PyQt.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
-    QMainWindow, QMessageBox, QPushButton, QShortcut, QStackedWidget, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QPushButton, QShortcut, QStackedWidget, QTabWidget, QToolBar, QToolButton,
+    QVBoxLayout, QWidget,
 )
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsFeature, QgsGeometry, QgsProject, QgsRectangle
 from qgis.gui import QgsMapCanvas, QgsMapToolEmitPoint, QgsMapToolIdentify
+from python.iop_style import DEFAULT_IOP_COLORS
 
+from . import APP_ICON, APP_NAME
 from .accounts import Accounts
 from .data import DataError, MapData
 from .dialogs import LoginPanel, SearchDialog, StyleDialog, WeightsDialog
@@ -23,6 +26,7 @@ from .pdf_export import export_map_pdf
 from .theme import THEMES, qt_palette, stylesheet
 
 PAN_HINT = 'Kliknij obiekt, aby zobaczyć atrybuty · przeciągnij mapę, aby ją przesunąć'
+MEASURE_LABEL = 'Zmierz odległość'
 
 
 def integer(value):
@@ -44,11 +48,15 @@ def icon(name, color, size=20):
     shapes = {
         'moon': '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
         'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
-        'plus': '<path d="M5 12h14M12 5v14"/>',
-        'minus': '<path d="M5 12h14"/>',
+        'weights': '<path d="M3 6h8m4 0h6M3 12h3m4 0h11M3 18h11m4 0h3"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/>',
+        'style': '<path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-3.7 1.5 1.5 0 0 1 1-2.7h2a4 4 0 0 0 4-4C21 6.4 17 3 12 3Z"/><path d="M7 11h.01M10 7h.01M15 7h.01M18 10h.01" stroke-width="2.7"/>',
+        'search': '<path d="M12 20H3V4h16v6M3 9h12M3 14h6M8 9v11"/><circle cx="16" cy="16" r="4"/><path d="m19 19 3 3"/>',
+        'measure': '<path d="m3 16 13-13 5 5L8 21Z M12 7l2 2m-5 1 2 2m-5 1 2 2"/>',
+        'pdf': '<path d="M5 21V3h10l4 4v14ZM14 3v5h5M8 16h8m-8-4h8"/>',
+        'plus': '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7 10h6m-3-3v6"/>',
+        'minus': '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7 10h6"/>',
         'extent': '<path d="M9 3H3v6m12-6h6v6M3 15v6h6m6 0h6v-6"/><circle cx="12" cy="12" r="3"/>',
         'refresh': '<path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2M5 16a8 8 0 0 0 13 2"/>',
-        'hex': '<path d="m12 2 8.7 5v10L12 22l-8.7-5V7Z"/><path d="m3.3 7 8.7 5 8.7-5M12 12v10"/>',
     }
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{shapes[name]}</svg>'
     pixmap = QPixmap(size * 2, size * 2)
@@ -60,21 +68,39 @@ def icon(name, color, size=20):
     return QIcon(pixmap)
 
 
+def set_tool_label(button, caption):
+    button.setText(caption)
+    button.setToolTip(caption)
+    button.setAccessibleName(caption)
+
+
+def tabbed_sidebar(name):
+    sidebar = QFrame()
+    sidebar.setObjectName(name)
+    sidebar.setFixedWidth(298)
+    layout = QVBoxLayout(sidebar)
+    layout.setContentsMargins(0, 10, 0, 0)
+    tabs = QTabWidget()
+    tabs.setDocumentMode(True)
+    layout.addWidget(tabs)
+    return sidebar, tabs
+
+
 class Legend(QWidget):
     def __init__(self):
         super().__init__()
         self.setFixedHeight(13)
         self.border = '#dde6e0'
         self.zero = .5
-        self.setAccessibleName('Skala IOP: ujemne czerwone, zero białe, dodatnie zielone')
+        self.colors = DEFAULT_IOP_COLORS
+        self.setAccessibleName('Skala IOP od minimum przez zero do maksimum')
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         gradient = QLinearGradient(0, 0, self.width(), 0)
-        gradient.setColorAt(0, QColor('#ff0000'))
-        gradient.setColorAt(self.zero, QColor('white'))
-        gradient.setColorAt(1, QColor('#008000'))
+        for position, color in zip((0, self.zero, 1), self.colors):
+            gradient.setColorAt(position, QColor(color))
         painter.setBrush(gradient)
         painter.setPen(QColor(self.border))
         painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 5, 5)
@@ -83,8 +109,8 @@ class Legend(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self, accounts=None, settings=None):
         super().__init__()
-        self.setWindowTitle('GeoAnaliza — Warszawa | Przejezdność terenu')
-        self.setWindowIcon(icon('hex', '#167d53', 48))
+        self.setWindowTitle(f'{APP_NAME} — Warszawa | Przejezdność terenu')
+        self.setWindowIcon(QIcon(str(APP_ICON)))
         self.resize(1440, 900)
         self.setMinimumSize(1080, 720)
         self.settings = settings if settings is not None else QSettings('PSIP', 'GeoAnaliza')
@@ -102,6 +128,7 @@ class MainWindow(QMainWindow):
         self.data = None
         self.session_user = None
         self.custom_limits = None
+        self.iop_colors = DEFAULT_IOP_COLORS
         self.weights_dialog = None
         self.point_target = None
         self.inspected = None
@@ -125,12 +152,12 @@ class MainWindow(QMainWindow):
         header.setFixedHeight(78)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(24, 12, 26, 12)
-        self.brand_icon = label()
-        self.brand_icon.setPixmap(icon('hex', '#167d53', 39).pixmap(39, 39))
-        header_layout.addWidget(self.brand_icon)
+        brand_icon = label()
+        brand_icon.setPixmap(self.windowIcon().pixmap(44, 44))
+        header_layout.addWidget(brand_icon)
         brand = QVBoxLayout()
         brand.setSpacing(0)
-        brand.addWidget(label('GeoAnaliza', 'Brand'))
+        brand.addWidget(label(APP_NAME, 'Brand'))
         brand.addWidget(label('PRACOWNIA PRZESTRZENNA', 'Eyebrow'))
         header_layout.addLayout(brand)
         header_layout.addStretch()
@@ -141,33 +168,15 @@ class MainWindow(QMainWindow):
         self.logout_button = QPushButton('Wyloguj się')
         self.logout_button.clicked.connect(self.sign_out)
         header_layout.addWidget(self.logout_button)
-        header_layout.addSpacing(16)
-        self.pdf_button = QPushButton('Eksport PDF')
-        self.pdf_button.clicked.connect(self.save_pdf)
-        header_layout.addWidget(self.pdf_button)
-        self.theme_button = QPushButton()
-        self.theme_button.setObjectName('ThemeButton')
-        self.theme_button.setAccessibleName('Przełącz tryb jasny i ciemny')
-        self.theme_button.setToolTip('Zmień wygląd całej aplikacji · Ctrl+Shift+L')
-        self.theme_button.clicked.connect(self.toggle_theme)
-        header_layout.addWidget(self.theme_button)
         outer.addWidget(header)
+        outer.addWidget(self.build_toolbar())
 
         content = QHBoxLayout()
         content.setSpacing(0)
-        sidebar = QFrame()
-        self.sidebar = sidebar
-        sidebar.setObjectName('Sidebar')
-        sidebar.setFixedWidth(298)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(0, 10, 0, 0)
-        self.side_tabs = QTabWidget()
-        self.side_tabs.setDocumentMode(True)
-        sidebar_layout.addWidget(self.side_tabs)
+        self.sidebar, self.side_tabs = tabbed_sidebar('Sidebar')
         analysis_panel = QWidget()
         self.side_tabs.addTab(analysis_panel, 'Analiza IOP')
         self.layer_panel = LayerPanel()
-        self.side_tabs.addTab(self.layer_panel, 'Warstwy')
         self.object_panel = ObjectPanel()
         self.side_tabs.addTab(self.object_panel, 'Obiekt')
         self.object_panel.zoom_requested.connect(self.zoom_to_object)
@@ -230,7 +239,7 @@ class MainWindow(QMainWindow):
         ticks.addStretch(50)
         ticks.addWidget(self.legend_high)
         side.addLayout(ticks)
-        explanation = label('Czerwony: utrudnienie\nZielony: ułatwienie', 'Muted')
+        explanation = label('Ujemne wartości: utrudnienie\nDodatnie wartości: ułatwienie', 'Muted')
         side.addWidget(explanation)
         side.addSpacing(6)
         summary = QFrame()
@@ -250,7 +259,7 @@ class MainWindow(QMainWindow):
         side.addWidget(label('PostGIS · env-test', 'MapTitle'))
         self.read_time = label('Oczekiwanie na odczyt', 'Small')
         side.addWidget(self.read_time)
-        content.addWidget(sidebar)
+        content.addWidget(self.sidebar)
 
         map_area = QVBoxLayout()
         map_area.setContentsMargins(20, 20, 20, 20)
@@ -261,42 +270,13 @@ class MainWindow(QMainWindow):
         frame_layout.setSpacing(0)
         map_header = QFrame()
         map_header.setObjectName('MapHeader')
-        map_header.setFixedHeight(65)
-        toolbar = QHBoxLayout(map_header)
-        toolbar.setContentsMargins(18, 10, 14, 10)
-        titles = QVBoxLayout()
+        map_header.setFixedHeight(54)
+        titles = QVBoxLayout(map_header)
+        titles.setContentsMargins(18, 6, 14, 6)
         titles.setSpacing(1)
         titles.addWidget(label('Mapa przejezdności', 'MapTitle'))
         self.map_subtitle = label('Łączenie z danymi przestrzennymi…', 'Small')
         titles.addWidget(self.map_subtitle)
-        toolbar.addLayout(titles)
-        toolbar.addStretch()
-        self.analysis_buttons = []
-        for caption, action in (('Wagi IOP', self.edit_weights), ('Edytuj styl', self.edit_style),
-                                ('Szukaj atrybutów', self.search_attributes)):
-            button = QPushButton(caption)
-            button.clicked.connect(action)
-            toolbar.addWidget(button)
-            self.analysis_buttons.append(button)
-        self.measure_button = QPushButton('Zmierz odległość')
-        self.measure_button.setCheckable(True)
-        self.measure_button.toggled.connect(self.toggle_measure)
-        toolbar.addWidget(self.measure_button)
-        self.analysis_buttons.append(self.measure_button)
-        toolbar.addSpacing(9)
-        self.tools = {}
-        for name, tooltip, action in (
-            ('refresh', 'Odśwież dane z bazy', self.load_data),
-            ('extent', 'Pokaż całą Warszawę', self.full_extent),
-            ('minus', 'Oddal mapę', lambda: self.canvas.zoomOut()),
-            ('plus', 'Przybliż mapę', lambda: self.canvas.zoomIn()),
-        ):
-            button = QToolButton()
-            button.setAccessibleName(tooltip)
-            button.setToolTip(tooltip)
-            button.clicked.connect(action)
-            toolbar.addWidget(button)
-            self.tools[name] = button
         frame_layout.addWidget(map_header)
         self.measure_panel = QFrame()
         self.measure_panel.setObjectName('MeasurePanel')
@@ -360,6 +340,10 @@ class MainWindow(QMainWindow):
         frame_layout.addWidget(self.pages)
         map_area.addWidget(frame)
         content.addLayout(map_area, 1)
+
+        self.layers_sidebar, layers_tabs = tabbed_sidebar('LayersSidebar')
+        layers_tabs.addTab(self.layer_panel, 'Warstwy')
+        content.addWidget(self.layers_sidebar)
         outer.addLayout(content, 1)
 
         footer = QFrame()
@@ -381,6 +365,46 @@ class MainWindow(QMainWindow):
         self.canvas.xyCoordinates.connect(self.show_coordinates)
         self.canvas.scaleChanged.connect(lambda scale: self.scale_label.setText(f'Skala 1 : {integer(round(scale))}'))
 
+    def build_toolbar(self):
+        toolbar = QToolBar('Narzędzia mapy', self)
+        toolbar.setObjectName('MapTools')
+        toolbar.setAccessibleName('Narzędzia mapy')
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        def add_tool(caption, action=None):
+            button = QToolButton()
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(34, 34)
+            button.setIconSize(QSize(20, 20))
+            button.setFocusPolicy(Qt.StrongFocus)
+            set_tool_label(button, caption)
+            if action is not None:
+                button.clicked.connect(action)
+            toolbar.addWidget(button)
+            return button
+
+        self.analysis_buttons = {
+            'weights': add_tool('Wagi IOP', self.edit_weights),
+            'style': add_tool('Edytuj styl', self.edit_style),
+            'search': add_tool('Wyszukaj', self.search_attributes),
+            'measure': add_tool(MEASURE_LABEL),
+        }
+        self.measure_button = self.analysis_buttons['measure']
+        self.measure_button.setCheckable(True)
+        self.measure_button.toggled.connect(self.toggle_measure)
+        toolbar.addSeparator()
+        self.tools = {
+            'refresh': add_tool('Odśwież dane z bazy', self.load_data),
+            'extent': add_tool('Pokaż całą Warszawę', self.full_extent),
+            'minus': add_tool('Oddal mapę', lambda: self.canvas.zoomOut()),
+            'plus': add_tool('Przybliż mapę', lambda: self.canvas.zoomIn()),
+        }
+        toolbar.addSeparator()
+        self.pdf_button = add_tool('Eksport PDF', self.save_pdf)
+        self.theme_button = add_tool('Zmień motyw', self.toggle_theme)
+        return toolbar
+
     def apply_theme(self, name, persist=True):
         self.theme = name
         colors = THEMES[name]
@@ -388,10 +412,13 @@ class MainWindow(QMainWindow):
         app.setPalette(qt_palette(colors))
         app.setStyleSheet(stylesheet(colors))
         self.canvas.setCanvasColor(QColor(colors['map']))
-        self.theme_button.setText('Tryb jasny' if name == 'dark' else 'Tryb ciemny')
+        theme_label = 'Tryb jasny' if name == 'dark' else 'Tryb ciemny'
+        set_tool_label(self.theme_button, theme_label)
+        self.theme_button.setToolTip(f'{theme_label} · Ctrl+Shift+L')
         self.theme_button.setIcon(icon('sun' if name == 'dark' else 'moon', colors['text']))
-        self.theme_button.setIconSize(QSize(18, 18))
-        self.brand_icon.setPixmap(icon('hex', colors['accent'], 39).pixmap(39, 39))
+        self.pdf_button.setIcon(icon('pdf', colors['text']))
+        for key, button in self.analysis_buttons.items():
+            button.setIcon(icon(key, colors['accent']))
         for key, button in self.tools.items():
             button.setIcon(icon(key, colors['text']))
         self.legend.border = colors['border']
@@ -427,9 +454,10 @@ class MainWindow(QMainWindow):
         self.logout_button.setVisible(signed_in)
         self.logout_button.setEnabled(not self.loading)
         self.user_label.setVisible(signed_in)
-        self.sidebar.setVisible(signed_in)
-        self.sidebar.setEnabled(ready)
-        for button in self.analysis_buttons:
+        for sidebar in (self.sidebar, self.layers_sidebar):
+            sidebar.setVisible(signed_in)
+            sidebar.setEnabled(ready)
+        for button in self.analysis_buttons.values():
             button.setEnabled(ready)
         self.pdf_button.setEnabled(ready and bool(self.canvas.layers()))
         for name, button in self.tools.items():
@@ -455,6 +483,7 @@ class MainWindow(QMainWindow):
         self.layer_panel.clear()
         self.data = None
         self.custom_limits = None
+        self.iop_colors = DEFAULT_IOP_COLORS
         self.style_combo.setCurrentIndex(0)
         custom_index = self.style_combo.findData('custom')
         if custom_index >= 0:
@@ -494,7 +523,7 @@ class MainWindow(QMainWindow):
             self.canvas.setLayers([])
             self.data = staged
             self.data.set_boundary_color(THEMES[self.theme]['line'])
-            self.data.set_style(self.style_combo.currentData(), self.custom_limits)
+            self.data.set_style(self.style_combo.currentData(), self.custom_limits, colors=self.iop_colors)
             for resolution, grid in self.data.grids.items():
                 self.layer_buttons[resolution].setText(f'H3 {resolution}\n{integer(grid.count)} heksagonów')
             self.layer_panel.upsert('boundary', self.data.boundary)
@@ -506,7 +535,6 @@ class MainWindow(QMainWindow):
             self.read_time.setText('Odczyt: ' + QDateTime.currentDateTime().toString('HH:mm:ss'))
             self.update_map_layers()
             self.update_values()
-            self.canvas.freeze(False)
             QTimer.singleShot(0, self.full_extent)
         except DataError as exc:
             self.canvas.stopRendering()
@@ -592,7 +620,6 @@ class MainWindow(QMainWindow):
     def add_point_layer(self, name):
         layer = make_point_layer(name)
         self.layer_panel.upsert(layer.id(), layer, at_top=True, editable=True)
-        self.side_tabs.setCurrentWidget(self.layer_panel)
         self.layer_panel.select(layer.id())
         self.update_map_layers()
         self.layer_panel.digitize_button.setChecked(True)
@@ -609,7 +636,7 @@ class MainWindow(QMainWindow):
             self.layer_panel.digitize_button.setChecked(False)
         self.canvas.setMapTool(self.pan_tool)
         self.tool_hint.setText(PAN_HINT)
-        self.measure_button.setText('Zmierz odległość')
+        set_tool_label(self.measure_button, MEASURE_LABEL)
         if self.distance_tool.meters is None:
             self.measure_panel.hide()
         else:
@@ -624,20 +651,18 @@ class MainWindow(QMainWindow):
             self.layer_panel.digitize_button.setChecked(False)
         self.canvas.setMapTool(self.distance_tool)
         self.canvas.setFocus()
-        self.measure_button.setText('Zakończ pomiar')
+        set_tool_label(self.measure_button, 'Zakończ pomiar')
 
-    def show_measure_instruction(self, message):
-        self.measure_value.setText('—')
+    def show_measure_instruction(self, message, value='—'):
+        self.measure_value.setText(value)
         self.fit_measure_value()
         self.measure_hint.setText(message)
         self.measure_panel.show()
 
     def show_measurement(self, meters):
         distance = f'{meters:,.2f}'.replace(',', ' ').replace('.', ',')
-        self.measure_value.setText(f'{distance} m')
-        self.fit_measure_value()
-        self.measure_hint.setText('Kliknij mapę, aby rozpocząć nowy pomiar. Esc wraca do przesuwania.')
-        self.measure_panel.show()
+        self.show_measure_instruction('Kliknij mapę, aby rozpocząć nowy pomiar. Esc wraca do przesuwania.',
+                                      f'{distance} m')
 
     def fit_measure_value(self):
         width = self.measure_value.fontMetrics().horizontalAdvance(self.measure_value.text())
@@ -661,7 +686,7 @@ class MainWindow(QMainWindow):
         with QSignalBlocker(self.measure_button):
             self.measure_button.setChecked(False)
         self.canvas.setMapTool(self.point_tool)
-        self.measure_button.setText('Zmierz odległość')
+        set_tool_label(self.measure_button, MEASURE_LABEL)
         self.clear_measurement()
         self.canvas.setFocus()
         self.tool_hint.setText('Kliknij na mapie, aby dodać punkt · Esc kończy dodawanie')
@@ -699,6 +724,7 @@ class MainWindow(QMainWindow):
         self.legend_low.setText(number(low).rstrip('0').rstrip(','))
         self.legend_high.setText(number(high).rstrip('0').rstrip(','))
         self.legend.zero = float(-low / (high - low))
+        self.legend.colors = self.iop_colors
         self.legend_ticks.setStretch(1, round(self.legend.zero * 1000))
         self.legend_ticks.setStretch(3, round((1 - self.legend.zero) * 1000))
         self.legend.update()
@@ -706,17 +732,12 @@ class MainWindow(QMainWindow):
     def change_style(self):
         if self.data:
             self.canvas.stopRendering()
-            self.data.set_style(self.style_combo.currentData(), self.custom_limits)
+            self.data.set_style(self.style_combo.currentData(), self.custom_limits, colors=self.iop_colors)
             self.update_map_layers()
             self.update_values()
 
     def current_limits(self):
-        mode = self.style_combo.currentData()
-        if mode == 'full':
-            return -1, 1
-        if mode == 'custom':
-            return self.custom_limits
-        return -self.data.detail_limit(), self.data.detail_limit()
+        return self.data.style_limits(self.style_combo.currentData(), self.custom_limits)
 
     def edit_weights(self):
         if not self.data:
@@ -746,31 +767,38 @@ class MainWindow(QMainWindow):
     def edit_style(self):
         if not self.data:
             return
-        dialog = StyleDialog(self.current_limits(), self)
+        limits = self.current_limits()
+        dialog = StyleDialog(limits, self.iop_colors, self)
         if dialog.exec() == StyleDialog.Accepted:
-            self.custom_limits = dialog.limits()
-            index = self.style_combo.findData('custom')
-            if index < 0:
-                self.style_combo.addItem('Własny zakres', 'custom')
+            self.iop_colors = dialog.colors()
+            chosen_limits = dialog.limits()
+            if chosen_limits != limits:
+                self.custom_limits = chosen_limits
                 index = self.style_combo.findData('custom')
-            self.style_combo.setCurrentIndex(index)
+                if index < 0:
+                    self.style_combo.addItem('Własny zakres', 'custom')
+                    index = self.style_combo.findData('custom')
+                with QSignalBlocker(self.style_combo):
+                    self.style_combo.setCurrentIndex(index)
             self.change_style()
         dialog.deleteLater()
 
     def search_attributes(self):
         if not self.data:
             return
-        key = 'grid'
-        if self.side_tabs.currentWidget() is self.layer_panel:
-            key = self.layer_panel.selected_key() or key
-        layer = self.layer_panel.layers[key]
-        dialog = SearchDialog(layer, self.data.labels, self)
-        dialog.feature_chosen.connect(lambda feature_id: self.select_feature(feature_id, key))
+        layers = {resolution: grid.layer for resolution, grid in self.data.grids.items()}
+        layers.update((key, layer) for key, layer in self.layer_panel.layers.items() if key != 'grid')
+        selected = self.layer_panel.selected_key()
+        dialog = SearchDialog(layers, selected if selected in layers else self.resolution, self.data.labels, self)
+        dialog.feature_chosen.connect(self.select_feature)
         dialog.selection_cleared.connect(self.clear_inspection)
         dialog.exec()
         dialog.deleteLater()
 
-    def select_feature(self, feature_id, key='grid'):
+    def select_feature(self, key, feature_id):
+        if isinstance(key, int):
+            self.select_grid(key)
+            key = 'grid'
         layer = self.layer_panel.layers[key]
         self.layer_panel.set_visible(key, True)
         self.show_inspected(layer, layer.getFeature(feature_id))
@@ -839,14 +867,14 @@ class MainWindow(QMainWindow):
         if not self.data or not self.canvas.layers():
             return
         filename, _ = QFileDialog.getSaveFileName(self, 'Eksportuj widok mapy',
-            str(Path.home() / 'Documents' / 'Mapa_GeoAnaliza.pdf'), 'Plik PDF (*.pdf)')
+            str(Path.home() / 'Documents' / f'Mapa {APP_NAME}.pdf'), 'Plik PDF (*.pdf)')
         if not filename:
             return
         if not filename.lower().endswith('.pdf'):
             filename += '.pdf'
         limits = self.current_limits() if self.layer_panel.visible('grid') else None
         try:
-            export_map_pdf(self.canvas, filename, iop_limits=limits)
+            export_map_pdf(self.canvas, filename, iop_limits=limits, iop_colors=self.iop_colors)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, 'Eksport PDF', f'Nie udało się zapisać mapy.\n{exc}')
             return

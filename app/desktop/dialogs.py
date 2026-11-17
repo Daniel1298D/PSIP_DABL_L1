@@ -1,16 +1,20 @@
 """Controls for signing in, changing the map style, and searching a grid."""
 
 from decimal import Decimal
+from itertools import islice
 import sqlite3
 
-from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtGui import QColor, QIcon, QPixmap
 from qgis.PyQt.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QSlider, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSizePolicy, QSlider, QTableView,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
-from qgis.core import QgsFeatureRequest
+from qgis.core import QgsFeatureRequest, QgsVariantUtils
+from python.iop_style import DEFAULT_IOP_COLORS
 
+from . import APP_NAME
 from .data import SCENARIO_FIELD
 
 
@@ -62,7 +66,7 @@ class LoginPanel(QWidget):
 
     def reset(self):
         self.creating = self.accounts.record() is None
-        self.title.setText('Utwórz konto GeoAnaliza' if self.creating else 'Zaloguj się do GeoAnalizy')
+        self.title.setText(f'Utwórz konto w {APP_NAME}' if self.creating else f'Zaloguj się do {APP_NAME}')
         self.instructions.setText('Pierwsze uruchomienie. Wybierz nazwę użytkownika i hasło (co najmniej 8 znaków).'
                                   if self.creating else 'Wpisz dane swojego lokalnego konta.')
         self.confirmation.setVisible(self.creating)
@@ -125,6 +129,28 @@ class WeightsDialog(QDialog):
         self.baseline = QLabel()
         self.baseline.setObjectName('Muted')
         layout.addWidget(self.baseline)
+
+        formula = QLabel('Zmiana IOP = wartość po normalizacji × (nowa waga − waga z bazy) ÷ liczba kryteriów')
+        formula.setWordWrap(True)
+        layout.addWidget(formula)
+        hint = QLabel('Poniższe przykłady pokazują zmianę względem IOP z bazy. Znak „+” oznacza wzrost wyniku, a „−” spadek.')
+        hint.setObjectName('Muted')
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.impact_table = QTableWidget(3, 3)
+        self.impact_table.setAccessibleName('Przykładowa zmiana IOP po zmianie wagi')
+        self.impact_table.setHorizontalHeaderLabels(['Wartość po normalizacji', 'Obliczenie', 'Zmiana IOP'])
+        header = self.impact_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.impact_table.verticalHeader().hide()
+        self.impact_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.impact_table.setSelectionMode(QTableWidget.NoSelection)
+        self.impact_table.setSizeAdjustPolicy(QTableWidget.AdjustToContents)
+        self.impact_table.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        layout.addWidget(self.impact_table)
+
         row = QHBoxLayout()
         reset_one = QPushButton('Przywróć tę wagę')
         reset_one.clicked.connect(self.reset_one)
@@ -155,6 +181,19 @@ class WeightsDialog(QDialog):
         self.slider.blockSignals(previous)
         self.weight_display.setText(f'{value:+.2f}'.replace('.', ','))
         self.baseline.setText(f'Waga z bazy: {baseline:+.2f}  ·  Zmienione kryteria: {len(self.values)}'.replace('.', ','))
+        weight_change = value - baseline
+        count = len(self.data.weights)
+        for row, normalized in enumerate((0.0, 0.5, 1.0)):
+            change = normalized * weight_change / count
+            cells = (
+                f'{normalized:.2f}',
+                f'{normalized:.2f} × ({weight_change:+.2f}) ÷ {count}',
+                f'{change:+.4f}' if change else '0,0000',
+            )
+            for column_index, cell in enumerate(cells):
+                item = QTableWidgetItem(cell.replace('.', ',').replace('-', '−'))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.impact_table.setItem(row, column_index, item)
 
     def move_weight(self, value):
         column = self.criterion.currentData()
@@ -185,12 +224,18 @@ class WeightsDialog(QDialog):
 
 
 class StyleDialog(QDialog):
-    def __init__(self, limits, parent=None):
+    PRESET_COLORS = (
+        ('Czerwony', DEFAULT_IOP_COLORS[0]), ('Pomarańczowy', '#f97316'), ('Żółty', '#facc15'),
+        ('Zielony', DEFAULT_IOP_COLORS[2]), ('Niebieski', '#2563eb'), ('Fioletowy', '#9333ea'),
+        ('Biały', DEFAULT_IOP_COLORS[1]), ('Szary', '#808080'), ('Czarny', '#000000'),
+    )
+
+    def __init__(self, limits, colors, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Edytuj zakres kolorów IOP')
-        self.setMinimumWidth(395)
+        self.setWindowTitle('Edytuj styl IOP')
+        self.setMinimumWidth(430)
         form = QFormLayout(self)
-        hint = QLabel('Minimum jest czerwone, zero białe, maksimum zielone. Wartości poza zakresem zachowują kolor skrajny.')
+        hint = QLabel('Kliknij próbkę, aby wybrać kolor. Wartości poza zakresem przyjmują kolor najbliższego końca skali.')
         hint.setWordWrap(True)
         form.addRow(hint)
         self.lower, self.upper = QDoubleSpinBox(), QDoubleSpinBox()
@@ -199,8 +244,28 @@ class StyleDialog(QDialog):
             spin.setRange(minimum, maximum)
             spin.setSingleStep(.005)
             spin.setValue(float(value))
-        form.addRow('Minimum (czerwony)', self.lower)
-        form.addRow('Maksimum (zielony)', self.upper)
+        self.color_buttons = []
+        self.palette_colors = list(colors)
+        for index, (caption, value) in enumerate((('Minimum', self.lower), ('Zero', QLabel('0')), ('Maksimum', self.upper))):
+            row = QHBoxLayout()
+            row.addWidget(value, 1)
+            button = QPushButton()
+            button.setMinimumWidth(130)
+            button.setToolTip(f'Wybierz kolor dla wartości: {caption.lower()}')
+            button.setAccessibleName(f'Wybierz kolor — {caption}')
+            button.setAutoDefault(False)
+            menu = QMenu(button)
+            for color_name, color in self.PRESET_COLORS:
+                menu.addAction(self.swatch_icon(color), color_name,
+                               lambda checked=False, position=index, code=color: self.set_color(position, code))
+            menu.addSeparator()
+            menu.addAction('Wpisz kod HEX…',
+                           lambda checked=False, position=index, name=caption: self.choose_hex(position, name))
+            button.setMenu(menu)
+            row.addWidget(button)
+            self.color_buttons.append(button)
+            self.update_swatch(index)
+            form.addRow(caption, row)
         buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Apply).setText('Zastosuj')
         buttons.button(QDialogButtonBox.Cancel).setText('Anuluj')
@@ -211,62 +276,151 @@ class StyleDialog(QDialog):
     def limits(self):
         return Decimal(str(self.lower.value())), Decimal(str(self.upper.value()))
 
+    def colors(self):
+        return tuple(self.palette_colors)
 
-def attribute_text(value):
-    return f'{value:.12g}' if isinstance(value, float) else str(value)
+    def choose_hex(self, index, name):
+        text, accepted = QInputDialog.getText(
+            self, f'Kolor — {name}', 'Kod HEX (#RRGGBB)', text=self.palette_colors[index],
+        )
+        if accepted:
+            code = '#' + text.strip().lstrip('#')
+            color = QColor(code)
+            if len(code) == 7 and color.isValid():
+                self.set_color(index, color.name())
+            else:
+                QMessageBox.warning(self, 'Nieprawidłowy kolor', 'Wpisz sześć cyfr lub liter od A do F, np. #2563EB.')
+
+    def set_color(self, index, color):
+        self.palette_colors[index] = color
+        self.update_swatch(index)
+
+    def update_swatch(self, index):
+        color = self.palette_colors[index]
+        button = self.color_buttons[index]
+        button.setIcon(self.swatch_icon(color))
+        button.setText(color.upper())
+
+    @staticmethod
+    def swatch_icon(color):
+        swatch = QPixmap(16, 16)
+        swatch.fill(QColor(color))
+        return QIcon(swatch)
+
+
+class AttributeTableModel(QAbstractTableModel):
+    BATCH_SIZE = 200
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.headers = []
+        self.descriptions = []
+        self.features = []
+        self.iterator = None
+
+    def set_layer(self, layer, labels):
+        self.close_iterator()
+        self.beginResetModel()
+        self.features.clear()
+        self.headers = []
+        self.descriptions = []
+        for index, field in enumerate(layer.fields()):
+            name = field.name()
+            header = layer.attributeDisplayName(index)
+            base = name.removesuffix('_norm').removesuffix('_waga')
+            detail = labels.get(base)
+            if name == SCENARIO_FIELD:
+                detail = 'IOP z aktualnymi wagami'
+            self.headers.append(header)
+            self.descriptions.append(' · '.join(dict.fromkeys(part for part in (header, name, detail) if part)))
+        self.iterator = layer.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))
+        self.endResetModel()
+        self.fetchMore()
+
+    def close_iterator(self):
+        if self.iterator is not None:
+            self.iterator.close()
+            self.iterator = None
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.features)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.headers)
+
+    def canFetchMore(self, parent=QModelIndex()):
+        return not parent.isValid() and self.iterator is not None
+
+    def fetchMore(self, parent=QModelIndex()):
+        if not self.canFetchMore(parent):
+            return
+        batch = list(islice(self.iterator, self.BATCH_SIZE))
+        if len(batch) < self.BATCH_SIZE:
+            self.close_iterator()
+        if batch:
+            start = len(self.features)
+            self.beginInsertRows(QModelIndex(), start, start + len(batch) - 1)
+            self.features.extend(batch)
+            self.endInsertRows()
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal:
+            if role == Qt.DisplayRole:
+                return self.headers[section]
+            if role == Qt.ToolTipRole:
+                return self.descriptions[section]
+        return super().headerData(section, orientation, role)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if index.isValid() and role in (Qt.DisplayRole, Qt.ToolTipRole):
+            value = self.features[index.row()][index.column()]
+            if QgsVariantUtils.isNull(value):
+                return '—'
+            return f'{value:.12g}' if isinstance(value, float) else str(value)
+        return None
 
 
 class SearchDialog(QDialog):
-    feature_chosen = pyqtSignal(object)
+    feature_chosen = pyqtSignal(object, object)
     selection_cleared = pyqtSignal()
-    ROW_LIMIT = 200
 
-    def __init__(self, layer, labels, parent=None):
+    def __init__(self, layers, selected_key, labels, parent=None):
         super().__init__(parent)
-        self.layer = layer
-        self.fields = layer.fields()
-        self.identity = [column for column in ('id', 'h3_index') if column in self.fields.names()]
-        self.setWindowTitle(f'Szukaj atrybutów · {layer.name()}')
-        self.resize(680, 490)
+        self.layers = layers
+        self.labels = labels
+        self.setWindowTitle('Tabela atrybutów')
+        self.resize(850, 550)
         layout = QVBoxLayout(self)
         form = QFormLayout()
-        self.field = QComboBox()
-        self.field.setMinimumContentsLength(26)
-        priority = {'h3_index': 'Identyfikator H3', 'id': 'Identyfikator', 'iop': 'IOP z bazy',
-                    SCENARIO_FIELD: 'IOP z aktualnymi wagami'}
-        fields = self.fields.names()
-        for column in dict.fromkeys([name for name in priority if name in fields] + fields):
-            base = column.removesuffix('_norm').removesuffix('_waga')
-            caption = f'{column} · {labels[base]}' if base in labels else column
-            self.field.addItem(priority.get(column, caption), column)
+        self.layer_choice = QComboBox()
+        for key, layer in layers.items():
+            self.layer_choice.addItem(layer.name(), key)
+        self.layer_choice.setCurrentIndex(max(0, self.layer_choice.findData(selected_key)))
+        form.addRow('Warstwa', self.layer_choice)
         self.query = QLineEdit()
-        self.query.setPlaceholderText('Wpisz całość lub fragment wartości')
-        form.addRow('Atrybut', self.field)
-        form.addRow('Szukana wartość', self.query)
+        self.query.setClearButtonEnabled(True)
+        self.query.setPlaceholderText('Wpisz pełną nazwę atrybutu lub jej fragment, np. iop')
+        form.addRow('Nazwa atrybutu', self.query)
         layout.addLayout(form)
-        search = QPushButton('Szukaj')
-        search.clicked.connect(self.search)
-        self.query.returnPressed.connect(self.search)
-        self.field.currentIndexChanged.connect(self.clear_results)
-        layout.addWidget(search, 0, Qt.AlignRight)
         self.status = QLabel()
         self.status.setObjectName('Muted')
         layout.addWidget(self.status)
-        headers = ['Identyfikator obiektu']
-        if 'h3_index' in self.identity:
-            headers.append('Identyfikator H3')
-        headers.append('Wartość')
-        self.table = QTableWidget(0, len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.itemSelectionChanged.connect(self.sync_buttons)
-        self.table.itemDoubleClicked.connect(self.choose)
-        layout.addWidget(self.table)
+        self.model = AttributeTableModel(self)
+        self.table = QTableView()
+        self.table.setAccessibleName('Atrybuty i wartości dla wybranej warstwy')
+        self.table.setModel(self.model)
+        self.table.horizontalHeader().setDefaultSectionSize(145)
+        self.table.setHorizontalScrollMode(QTableView.ScrollPerPixel)
+        self.table.setSelectionBehavior(QTableView.SelectRows)
+        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.setEditTriggers(QTableView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.selectionModel().selectionChanged.connect(self.sync_buttons)
+        self.table.doubleClicked.connect(self.choose)
+        layout.addWidget(self.table, 1)
         row = QHBoxLayout()
         clear = QPushButton('Usuń zaznaczenie')
+        clear.clicked.connect(self.table.clearSelection)
         clear.clicked.connect(self.selection_cleared.emit)
         row.addWidget(clear)
         row.addStretch()
@@ -277,52 +431,43 @@ class SearchDialog(QDialog):
         close.clicked.connect(self.reject)
         row.addWidget(close)
         layout.addLayout(row)
-        self.clear_results()
+        for button in (clear, self.show_feature, close):
+            button.setAutoDefault(False)
+        self.layer_choice.currentIndexChanged.connect(self.change_layer)
+        self.query.textChanged.connect(self.filter_fields)
+        self.finished.connect(self.model.close_iterator)
+        self.change_layer()
+        self.query.setFocus()
 
-    def clear_results(self):
-        self.table.setRowCount(0)
-        self.status.setText('Wybierz atrybut i wpisz wartość.')
+    def change_layer(self):
+        key = self.layer_choice.currentData()
+        self.model.set_layer(self.layers[key], self.labels if isinstance(key, int) else {})
+        self.filter_fields()
+        self.table.scrollToTop()
+
+    def filter_fields(self):
+        query = self.query.text().strip().casefold()
+        visible = 0
+        for column, name in enumerate(self.model.descriptions):
+            matches = query in name.casefold()
+            self.table.setColumnHidden(column, not matches)
+            visible += matches
+        self.table.horizontalScrollBar().setValue(0)
+        if not visible:
+            self.status.setText('Brak atrybutów pasujących do wpisanej nazwy.' if query else 'Warstwa nie ma atrybutów.')
+        elif not self.model.rowCount():
+            self.status.setText('Warstwa nie zawiera obiektów. W tabeli widać nazwy atrybutów.')
+        else:
+            self.status.setText(f'Widoczne atrybuty: {visible} z {self.model.columnCount()}')
         self.sync_buttons()
 
     def sync_buttons(self):
-        self.show_feature.setEnabled(bool(self.table.selectedItems()))
-
-    def search(self):
-        self.table.setRowCount(0)
-        column = self.field.currentData()
-        query = self.query.text().strip().casefold()
-        if not query or column is None:
-            self.clear_results()
-            return
-        field = self.fields.field(column)
-        if field.isNumeric():
-            query = query.replace(',', '.')
-        request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
-        request.setSubsetOfAttributes(list(dict.fromkeys(self.identity + [column])), self.fields)
-        matches = 0
-        for feature in self.layer.getFeatures(request):
-            value = attribute_text(feature[column])
-            if query not in value.casefold():
-                continue
-            matches += 1
-            if matches > self.ROW_LIMIT:
-                continue
-            index = self.table.rowCount()
-            self.table.insertRow(index)
-            cells = [str(feature['id'] if 'id' in self.identity else feature.id())]
-            if 'h3_index' in self.identity:
-                cells.append(str(feature['h3_index']))
-            cells.append(value)
-            for col, cell in enumerate(cells):
-                item = QTableWidgetItem(cell)
-                item.setData(Qt.UserRole, feature.id())
-                self.table.setItem(index, col, item)
-        suffix = f' · pokazano {self.ROW_LIMIT}, zawęź wyszukiwanie' if matches > self.ROW_LIMIT else ''
-        self.status.setText(f'Wyniki: {matches}{suffix}' if matches else 'Brak pasujących obiektów.')
-        self.sync_buttons()
+        self.show_feature.setEnabled(bool(self.table.selectionModel().selectedRows()) and
+                                     self.table.horizontalHeader().hiddenSectionCount() < self.model.columnCount())
 
     def choose(self):
-        items = self.table.selectedItems()
-        if items:
-            self.feature_chosen.emit(items[0].data(Qt.UserRole))
+        rows = self.table.selectionModel().selectedRows()
+        if rows and self.show_feature.isEnabled():
+            feature = self.model.features[rows[0].row()]
+            self.feature_chosen.emit(self.layer_choice.currentData(), feature.id())
             self.accept()

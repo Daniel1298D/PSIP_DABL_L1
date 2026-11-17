@@ -1,4 +1,4 @@
-# GeoAnaliza — aplikacja okienkowa
+# QGIS PRO — aplikacja okienkowa
 
 Własna aplikacja w Pythonie ma oddzielne okno i uruchamia się plikiem
 `GeoAnaliza.cmd`. Nie uruchamia interfejsu QGIS. Do rysowania mapy używa
@@ -8,7 +8,7 @@ zainstalowanych bibliotek GIS i Qt z instalacji QGIS 3.44.1.
 
 1. Uruchom Docker Desktop.
 2. Upewnij się, że działa kontener `remote-db-env-test-postgis-1`.
-3. Otwórz `GeoAnaliza.cmd` z głównego katalogu projektu lub skrót **GeoAnaliza**
+3. Otwórz `GeoAnaliza.cmd` z głównego katalogu projektu lub skrót **QGIS PRO**
    na pulpicie.
 
 Pliki źródłowe są w tym samym projekcie PyCharm:
@@ -54,29 +54,29 @@ w prawym górnym rogu mapy ponownie pobiera dane z bazy.
 
 ## Mapa i narzędzia
 
-Przy pierwszym uruchomieniu utwórz lokalne konto GeoAnalizy. Nazwa użytkownika
+Przy pierwszym uruchomieniu utwórz lokalne konto w QGIS PRO. Nazwa użytkownika
 ma od 3 do 64 znaków, a hasło co najmniej 8. Kolejne uruchomienia wymagają
 logowania. Przycisk **Wyloguj się** kończy sesję i wraca do formularza.
 Konto jest przypisane do profilu Windows. Aplikacja zapisuje pochodną hasła
 obliczoną przez `scrypt` z losową solą w `%LOCALAPPDATA%/GeoAnaliza/account.sqlite3`.
-Dane tego konta służą tylko do logowania w GeoAnalizie.
+Dane tego konta służą tylko do logowania w QGIS PRO.
 
 - **Wagi IOP** — wybierz jedną z 73 warstw i ustaw jej wagę suwakiem od −1 do +1.
   Mapa przelicza IOP według dotychczasowego wzoru, z dzielnikiem równym liczbie
   kryteriów. Wagi można przywrócić pojedynczo lub wszystkie naraz. Przeliczenie
   dotyczy sesji aplikacji i korzysta z normalizacji z PostgreSQL.
-- **Edytuj styl** — ustaw ujemne minimum i dodatnie maksimum skali kolorów.
-  Biel oznacza IOP równy 0, także w skali niesymetrycznej. Wartości poza
-  ustawionym zakresem otrzymują skrajne kolory. Wybór skali w panelu pozwala
-  wrócić do widoku pełnego albo szczegółowego.
-- **Szukaj atrybutów** — wybierz kolumnę aktywnej siatki, wpisz całość lub
-  fragment wartości, a następnie wskaż wynik i kliknij **Pokaż na mapie**.
-  Wybór `IOP z aktualnymi wagami` obejmuje wartość po zmianach suwaków.
-  W zakładce **Warstwy** wyszukiwanie dotyczy zaznaczonej warstwy.
+- **Edytuj styl** — ustaw zakres i wybierz osobno kolor minimum, zera i maksimum.
+  Kliknij próbkę i wybierz kolor z listy albo wpisz kod HEX.
+  Wybrana paleta działa na wszystkich siatkach H3, w legendzie i w eksporcie PDF
+  w bieżącej sesji. Wartości poza zakresem otrzymują skrajne kolory.
+- **Wyszukaj** otwiera tabelę atrybutów. Wybierz warstwę i wpisz całość lub
+  fragment nazwy atrybutu, aby zostawić w tabeli pasujące kolumny.
+  Każdy wiersz odpowiada jednemu obiektowi. Zaznacz wiersz i kliknij
+  **Pokaż na mapie**, aby przybliżyć się do obiektu.
 
 ### Warstwy, współrzędne i pomiar
 
-6. Zakładka **Warstwy** pokazuje kolejność rysowania. Warstwa wyżej na liście
+6. Zakładka **Warstwy** po prawej stronie mapy pokazuje kolejność rysowania. Warstwa wyżej na liście
    znajduje się na wierzchu mapy. Użyj przycisków **Wyżej**, **Niżej**
    i pól wyboru widoczności.
 7. Stopka pokazuje szerokość i długość kursora w stopniach **EPSG:4326**.
@@ -99,7 +99,7 @@ Dane tego konta służą tylko do logowania w GeoAnalizie.
 - Dotychczasowe skale IOP: pełna [-1,+1] i szczegółowa [-0,07,+0,07].
   Wartości ujemne są czerwone, zero białe, a dodatnie zielone.
 - Legenda, opcjonalny obrys Warszawy, współrzędne kursora WGS84 i skala mapy.
-- Przycisk **Tryb ciemny / Tryb jasny** w prawym górnym rogu.
+- Przycisk **Tryb ciemny / Tryb jasny** na górnym pasku ikon.
   Zmienia nagłówek, panel warstw, kontrolki, legendę, tło mapy, stopkę
   i na wspieranych wersjach Windows także pasek tytułu.
 - Skrót klawiaturowy motywu: **Ctrl+Shift+L**.

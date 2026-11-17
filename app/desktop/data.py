@@ -11,7 +11,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsDataSourceUri,
     QgsFeatureRequest, QgsField, QgsFillSymbol, QgsProject, QgsVectorLayer, QgsWkbTypes,
 )
-from python.iop_style import custom_renderer, renderer
+from python.iop_style import DEFAULT_IOP_COLORS, custom_renderer, renderer
 
 SCENARIO_FIELD = 'iop_scenariusz'
 
@@ -124,17 +124,24 @@ class MapData:
         self.extent = transform.transformBoundingBox(boundary.extent())
         self.extent.scale(1.12)
 
-    def set_style(self, mode, custom=None):
+    def style_limits(self, mode, custom=None):
+        if mode == 'custom' and custom is not None:
+            return custom
         limit = Decimal('1') if mode == 'full' else self.detail_limit()
-        classes = int(2 * limit / (Decimal('0.01') if mode == 'full' else Decimal('0.005')))
+        return -limit, limit
+
+    def set_style(self, mode, custom=None, *, colors=DEFAULT_IOP_COLORS):
+        lower, upper = self.style_limits(mode, custom)
+        if mode == 'custom' and custom is not None:
+            style = custom_renderer(lower, upper, SCENARIO_FIELD, colors=colors)
+        else:
+            step = Decimal('0.01') if mode == 'full' else Decimal('0.005')
+            classes = int((upper - lower) / step)
+            style = renderer(lower, upper, classes, SCENARIO_FIELD, colors=colors)
         for grid in self.grids.values():
-            if mode == 'custom' and custom is not None:
-                style = custom_renderer(*custom, SCENARIO_FIELD)
-            else:
-                style = renderer(-limit, limit, classes, SCENARIO_FIELD)
-            grid.layer.setRenderer(style)
+            grid.layer.setRenderer(style.clone())
             grid.layer.triggerRepaint()
-        return custom if mode == 'custom' and custom else (-limit, limit)
+        return lower, upper
 
     def detail_limit(self):
         if not self.scenario_ranges:
