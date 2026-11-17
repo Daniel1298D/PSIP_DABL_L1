@@ -1,10 +1,11 @@
 """Controls for signing in, changing the map style, and searching a grid."""
 
 from decimal import Decimal
+from functools import partial
 from itertools import islice
 import sqlite3
 
-from qgis.PyQt.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal
+from qgis.PyQt.QtCore import QAbstractTableModel, QModelIndex, QSignalBlocker, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap
 from qgis.PyQt.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
@@ -16,6 +17,13 @@ from python.iop_style import DEFAULT_IOP_COLORS
 
 from . import APP_NAME
 from .data import SCENARIO_FIELD
+
+
+def add_button(layout, text, on_click):
+    button = QPushButton(text)
+    button.clicked.connect(on_click)
+    layout.addWidget(button)
+    return button
 
 
 class LoginPanel(QWidget):
@@ -46,6 +54,7 @@ class LoginPanel(QWidget):
         for entry in (self.password, self.confirmation):
             entry.setMaxLength(256)
             entry.setEchoMode(QLineEdit.Password)
+            entry.returnPressed.connect(self.login)
         fields.addRow('Użytkownik', self.username)
         fields.addRow('Hasło', self.password)
         self.confirmation_label = QLabel('Powtórz hasło')
@@ -55,11 +64,7 @@ class LoginPanel(QWidget):
         self.error.setWordWrap(True)
         self.error.setObjectName('Error')
         form.addWidget(self.error)
-        self.submit = QPushButton()
-        self.submit.clicked.connect(self.login)
-        self.password.returnPressed.connect(self.login)
-        self.confirmation.returnPressed.connect(self.login)
-        form.addWidget(self.submit)
+        self.submit = add_button(form, '', self.login)
         layout.addStretch()
         layout.addWidget(card, 0, Qt.AlignCenter)
         layout.addStretch()
@@ -100,6 +105,7 @@ class LoginPanel(QWidget):
 
 class WeightsDialog(QDialog):
     weights_changed = pyqtSignal(dict)
+    EXAMPLE_VALUES = (0.0, 0.5, 1.0)
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -137,7 +143,7 @@ class WeightsDialog(QDialog):
         hint.setObjectName('Muted')
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        self.impact_table = QTableWidget(3, 3)
+        self.impact_table = QTableWidget(len(self.EXAMPLE_VALUES), 3)
         self.impact_table.setAccessibleName('Przykładowa zmiana IOP po zmianie wagi')
         self.impact_table.setHorizontalHeaderLabels(['Wartość po normalizacji', 'Obliczenie', 'Zmiana IOP'])
         header = self.impact_table.horizontalHeader()
@@ -152,16 +158,10 @@ class WeightsDialog(QDialog):
         layout.addWidget(self.impact_table)
 
         row = QHBoxLayout()
-        reset_one = QPushButton('Przywróć tę wagę')
-        reset_one.clicked.connect(self.reset_one)
-        row.addWidget(reset_one)
-        reset_all = QPushButton('Przywróć wszystkie')
-        reset_all.clicked.connect(self.reset_all)
-        row.addWidget(reset_all)
+        add_button(row, 'Przywróć tę wagę', self.reset_one)
+        add_button(row, 'Przywróć wszystkie', self.reset_all)
         row.addStretch()
-        close = QPushButton('Zamknij')
-        close.clicked.connect(self.accept)
-        row.addWidget(close)
+        add_button(row, 'Zamknij', self.accept)
         layout.addLayout(row)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -176,14 +176,15 @@ class WeightsDialog(QDialog):
         column = self.criterion.currentData()
         baseline = self.data.weights[column]
         value = self.values.get(column, baseline)
-        previous = self.slider.blockSignals(True)
-        self.slider.setValue(round(value * 100))
-        self.slider.blockSignals(previous)
+        with QSignalBlocker(self.slider):
+            self.slider.setValue(round(value * 100))
         self.weight_display.setText(f'{value:+.2f}'.replace('.', ','))
         self.baseline.setText(f'Waga z bazy: {baseline:+.2f}  ·  Zmienione kryteria: {len(self.values)}'.replace('.', ','))
-        weight_change = value - baseline
+        self.show_weight_impact(value - baseline)
+
+    def show_weight_impact(self, weight_change):
         count = len(self.data.weights)
-        for row, normalized in enumerate((0.0, 0.5, 1.0)):
+        for row, normalized in enumerate(self.EXAMPLE_VALUES):
             change = normalized * weight_change / count
             cells = (
                 f'{normalized:.2f}',
@@ -195,12 +196,13 @@ class WeightsDialog(QDialog):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.impact_table.setItem(row, column_index, item)
 
-    def move_weight(self, value):
+    def move_weight(self, slider_position):
         column = self.criterion.currentData()
-        if value / 100 == self.data.weights[column]:
+        weight = slider_position / 100
+        if weight == self.data.weights[column]:
             self.values.pop(column, None)
         else:
-            self.values[column] = value / 100
+            self.values[column] = weight
         self.show_weight()
         self.timer.start()
 
@@ -257,10 +259,9 @@ class StyleDialog(QDialog):
             menu = QMenu(button)
             for color_name, color in self.PRESET_COLORS:
                 menu.addAction(self.swatch_icon(color), color_name,
-                               lambda checked=False, position=index, code=color: self.set_color(position, code))
+                               partial(self.set_color, index, color))
             menu.addSeparator()
-            menu.addAction('Wpisz kod HEX…',
-                           lambda checked=False, position=index, name=caption: self.choose_hex(position, name))
+            menu.addAction('Wpisz kod HEX…', partial(self.choose_hex, index, caption))
             button.setMenu(menu)
             row.addWidget(button)
             self.color_buttons.append(button)
@@ -283,13 +284,14 @@ class StyleDialog(QDialog):
         text, accepted = QInputDialog.getText(
             self, f'Kolor — {name}', 'Kod HEX (#RRGGBB)', text=self.palette_colors[index],
         )
-        if accepted:
-            code = '#' + text.strip().lstrip('#')
-            color = QColor(code)
-            if len(code) == 7 and color.isValid():
-                self.set_color(index, color.name())
-            else:
-                QMessageBox.warning(self, 'Nieprawidłowy kolor', 'Wpisz sześć cyfr lub liter od A do F, np. #2563EB.')
+        if not accepted:
+            return
+        code = '#' + text.strip().lstrip('#')
+        color = QColor(code)
+        if len(code) == 7 and color.isValid():
+            self.set_color(index, color.name())
+        else:
+            QMessageBox.warning(self, 'Nieprawidłowy kolor', 'Wpisz sześć cyfr lub liter od A do F, np. #2563EB.')
 
     def set_color(self, index, color):
         self.palette_colors[index] = color
@@ -331,8 +333,9 @@ class AttributeTableModel(QAbstractTableModel):
             detail = labels.get(base)
             if name == SCENARIO_FIELD:
                 detail = 'IOP z aktualnymi wagami'
+            parts = [part for part in (header, name, detail) if part]
             self.headers.append(header)
-            self.descriptions.append(' · '.join(dict.fromkeys(part for part in (header, name, detail) if part)))
+            self.descriptions.append(' · '.join(dict.fromkeys(parts)))
         self.iterator = layer.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))
         self.endResetModel()
         self.fetchMore()
@@ -419,17 +422,11 @@ class SearchDialog(QDialog):
         self.table.doubleClicked.connect(self.choose)
         layout.addWidget(self.table, 1)
         row = QHBoxLayout()
-        clear = QPushButton('Usuń zaznaczenie')
-        clear.clicked.connect(self.table.clearSelection)
+        clear = add_button(row, 'Usuń zaznaczenie', self.table.clearSelection)
         clear.clicked.connect(self.selection_cleared.emit)
-        row.addWidget(clear)
         row.addStretch()
-        self.show_feature = QPushButton('Pokaż na mapie')
-        self.show_feature.clicked.connect(self.choose)
-        row.addWidget(self.show_feature)
-        close = QPushButton('Zamknij')
-        close.clicked.connect(self.reject)
-        row.addWidget(close)
+        self.show_feature = add_button(row, 'Pokaż na mapie', self.choose)
+        close = add_button(row, 'Zamknij', self.reject)
         layout.addLayout(row)
         for button in (clear, self.show_feature, close):
             button.setAutoDefault(False)
