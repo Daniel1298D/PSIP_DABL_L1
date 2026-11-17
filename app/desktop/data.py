@@ -58,6 +58,16 @@ class Grid:
     maximum: float
 
 
+def _attribute_request(layer, column_names):
+    return QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes(column_names, layer.fields())
+
+
+def _rounded_detail_limit(ranges):
+    largest = max(abs(value) for bounds in ranges for value in bounds)
+    step = Decimal('0.01')
+    return max(step, Decimal(str(largest)).quantize(step, rounding=ROUND_CEILING))
+
+
 class MapData:
     """Own all layers for this application; never open or modify a QGIS project."""
     def __init__(self):
@@ -76,38 +86,16 @@ class MapData:
         try:
             with socket.create_connection((config.host, int(config.port)), timeout=3):
                 pass
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError):
             raise DataError(f'Baza env-test nie odpowiada na porcie {config.port}. Uruchom Docker Desktop i kontener remote-db-env-test-postgis-1, następnie spróbuj ponownie.') from None
         os.environ.setdefault('PGCONNECT_TIMEOUT', '5')
-        staged = {}
-        for resolution in (7, 8, 9):
-            name = f'iop_h3_{resolution}'
-            layer = QgsVectorLayer(config.uri('viz', name, 3857), f'H3 {resolution} — IOP', 'postgres')
-            if not layer.isValid():
-                raise DataError(f'Nie udało się odczytać H3 {resolution}. Sprawdź, czy Docker i baza env-test na porcie {config.port} działają.')
-            index = layer.fields().indexFromName('iop')
-            count = layer.featureCount()
-            if index < 0 or count <= 0:
-                raise DataError(f'Warstwa H3 {resolution} nie zawiera wyników IOP.')
-            if layer.crs().authid() != 'EPSG:3857':
-                raise DataError('Nieoczekiwany układ warstwy mapowej.')
-            staged[resolution] = Grid(resolution, layer, count, float(layer.minimumValue(index)), float(layer.maximumValue(index)))
+        grids = {resolution: self._read_grid(config, resolution) for resolution in (7, 8, 9)}
         config_path = Path(__file__).resolve().parents[1] / 'config/iop_weights.json'
         groups = json.loads(config_path.read_text(encoding='utf-8'))['criteria']
         self.labels = {column: group['label'] for group in groups for column in group['columns']}
-        for grid in staged.values():
+        for grid in grids.values():
             layer = grid.layer
-            names = layer.fields().names()
-            columns = [name[:-5] for name in names if name.endswith('_norm')]
-            weight_fields = [column + '_waga' for column in columns]
-            if not columns or any(name not in names for name in weight_fields):
-                raise DataError('Warstwa nie zawiera pełnego zestawu wag i normalizacji.')
-            request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setLimit(1)
-            request.setSubsetOfAttributes(weight_fields, layer.fields())
-            example = next(layer.getFeatures(request), None)
-            if example is None:
-                raise DataError('Nie można odczytać wag z PostgreSQL.')
-            weights = {column: float(example[column + '_waga']) for column in columns}
+            weights = self._read_weights(layer)
             if self.weights and weights != self.weights:
                 raise DataError('Siatki mają różne zestawy wag. Sprawdź wyniki IOP w bazie.')
             self.weights = weights
@@ -115,14 +103,38 @@ class MapData:
         boundary = QgsVectorLayer(config.uri('grid', 'powiat', 2180), 'Granica Warszawy', 'postgres')
         if not boundary.isValid():
             raise DataError('Nie udało się odczytać granicy Warszawy z bazy.')
-        largest = max(max(abs(g.minimum), abs(g.maximum)) for g in staged.values())
-        limit = max(Decimal('0.01'), Decimal(str(largest)).quantize(Decimal('0.01'), rounding=ROUND_CEILING))
-        self.grids, self.boundary, self.limit = staged, boundary, limit
+        limit = _rounded_detail_limit((grid.minimum, grid.maximum) for grid in grids.values())
+        self.grids, self.boundary, self.limit = grids, boundary, limit
         self.set_style('detail')
         self.set_boundary_color('#50645a')
         transform = QgsCoordinateTransform(boundary.crs(), self.crs, QgsProject.instance().transformContext())
         self.extent = transform.transformBoundingBox(boundary.extent())
         self.extent.scale(1.12)
+
+    @staticmethod
+    def _read_grid(config, resolution):
+        layer = QgsVectorLayer(config.uri('viz', f'iop_h3_{resolution}', 3857), f'H3 {resolution} — IOP', 'postgres')
+        if not layer.isValid():
+            raise DataError(f'Nie udało się odczytać H3 {resolution}. Sprawdź, czy Docker i baza env-test na porcie {config.port} działają.')
+        index = layer.fields().indexFromName('iop')
+        count = layer.featureCount()
+        if index < 0 or count <= 0:
+            raise DataError(f'Warstwa H3 {resolution} nie zawiera wyników IOP.')
+        if layer.crs().authid() != 'EPSG:3857':
+            raise DataError('Nieoczekiwany układ warstwy mapowej.')
+        return Grid(resolution, layer, count, float(layer.minimumValue(index)), float(layer.maximumValue(index)))
+
+    @staticmethod
+    def _read_weights(layer):
+        names = layer.fields().names()
+        columns = [name.removesuffix('_norm') for name in names if name.endswith('_norm')]
+        weight_fields = [column + '_waga' for column in columns]
+        if not columns or any(name not in names for name in weight_fields):
+            raise DataError('Warstwa nie zawiera pełnego zestawu wag i normalizacji.')
+        example = next(layer.getFeatures(_attribute_request(layer, weight_fields).setLimit(1)), None)
+        if example is None:
+            raise DataError('Nie można odczytać wag z PostgreSQL.')
+        return {column: float(example[field]) for column, field in zip(columns, weight_fields)}
 
     def style_limits(self, mode, custom=None):
         if mode == 'custom' and custom is not None:
@@ -146,8 +158,7 @@ class MapData:
     def detail_limit(self):
         if not self.scenario_ranges:
             return self.limit
-        largest = max(abs(value) for bounds in self.scenario_ranges.values() for value in bounds)
-        return max(Decimal('0.01'), Decimal(str(largest)).quantize(Decimal('0.01'), rounding=ROUND_CEILING))
+        return _rounded_detail_limit(self.scenario_ranges.values())
 
     def set_weights(self, overrides):
         if any(column not in self.weights or not -1 <= value <= 1 for column, value in overrides.items()):
@@ -162,8 +173,7 @@ class MapData:
             layer = grid.layer
             layer.updateExpressionField(layer.fields().indexFromName(SCENARIO_FIELD), expression)
             if terms:
-                request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
-                request.setSubsetOfAttributes([SCENARIO_FIELD], layer.fields())
+                request = _attribute_request(layer, [SCENARIO_FIELD])
                 values = [float(feature[SCENARIO_FIELD]) for feature in layer.getFeatures(request)]
                 self.scenario_ranges[resolution] = min(values), max(values)
             layer.triggerRepaint()

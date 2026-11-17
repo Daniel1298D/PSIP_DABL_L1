@@ -146,7 +146,18 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        outer.addWidget(self.build_header())
+        outer.addWidget(self.build_toolbar())
 
+        content = QHBoxLayout()
+        content.setSpacing(0)
+        content.addWidget(self.build_analysis_sidebar())
+        content.addLayout(self.build_map_area(), 1)
+        content.addWidget(self.build_layers_sidebar())
+        outer.addLayout(content, 1)
+        outer.addWidget(self.build_footer())
+
+    def build_header(self):
         header = QFrame()
         header.setObjectName('Header')
         header.setFixedHeight(78)
@@ -168,24 +179,15 @@ class MainWindow(QMainWindow):
         self.logout_button = QPushButton('Wyloguj się')
         self.logout_button.clicked.connect(self.sign_out)
         header_layout.addWidget(self.logout_button)
-        outer.addWidget(header)
-        outer.addWidget(self.build_toolbar())
+        return header
 
-        content = QHBoxLayout()
-        content.setSpacing(0)
+    def build_analysis_sidebar(self):
         self.sidebar, self.side_tabs = tabbed_sidebar('Sidebar')
         analysis_panel = QWidget()
         self.side_tabs.addTab(analysis_panel, 'Analiza IOP')
-        self.layer_panel = LayerPanel()
         self.object_panel = ObjectPanel()
         self.side_tabs.addTab(self.object_panel, 'Obiekt')
         self.object_panel.zoom_requested.connect(self.zoom_to_object)
-        self.layer_panel.changed.connect(self.update_map_layers)
-        self.layer_panel.import_files.connect(self.pick_shape_files)
-        self.layer_panel.import_folder.connect(self.pick_shape_folder)
-        self.layer_panel.create_points.connect(self.prompt_point_layer)
-        self.layer_panel.digitize.connect(self.toggle_digitize)
-        self.layer_panel.list.currentRowChanged.connect(self.point_selection_changed)
         side = QVBoxLayout(analysis_panel)
         side.setContentsMargins(22, 22, 22, 18)
         side.setSpacing(11)
@@ -197,7 +199,7 @@ class MainWindow(QMainWindow):
         side.addWidget(label('ROZDZIELCZOŚĆ SIATKI', 'Eyebrow'))
         self.layer_buttons = {}
         group = QButtonGroup(self)
-        group.setExclusive(True)
+        group.idClicked.connect(self.select_grid)
         for resolution in (7, 8, 9):
             button = QPushButton(f'H3 {resolution}')
             button.setObjectName('LayerCard')
@@ -205,8 +207,7 @@ class MainWindow(QMainWindow):
             button.setMinimumHeight(61)
             button.setCheckable(True)
             button.setChecked(resolution == self.resolution)
-            button.clicked.connect(lambda checked, r=resolution: self.select_grid(r))
-            group.addButton(button)
+            group.addButton(button, resolution)
             self.layer_buttons[resolution] = button
             side.addWidget(button)
         side.addSpacing(7)
@@ -259,8 +260,9 @@ class MainWindow(QMainWindow):
         side.addWidget(label('PostGIS · env-test', 'MapTitle'))
         self.read_time = label('Oczekiwanie na odczyt', 'Small')
         side.addWidget(self.read_time)
-        content.addWidget(self.sidebar)
+        return self.sidebar
 
+    def build_map_area(self):
         map_area = QVBoxLayout()
         map_area.setContentsMargins(20, 20, 20, 20)
         frame = QFrame()
@@ -305,13 +307,11 @@ class MainWindow(QMainWindow):
         loading_layout.setContentsMargins(50, 30, 50, 30)
         loading_layout.addStretch()
         self.load_title = label('Wczytywanie heksagonów…', 'Title')
-        self.load_title.setAlignment(Qt.AlignCenter)
-        self.load_title.setWordWrap(True)
-        loading_layout.addWidget(self.load_title)
         self.load_message = label('Odczyt danych bezpośrednio z PostgreSQL.', 'Muted')
-        self.load_message.setWordWrap(True)
-        self.load_message.setAlignment(Qt.AlignCenter)
-        loading_layout.addWidget(self.load_message)
+        for line in (self.load_title, self.load_message):
+            line.setAlignment(Qt.AlignCenter)
+            line.setWordWrap(True)
+            loading_layout.addWidget(line)
         self.retry_button = QPushButton('Spróbuj ponownie')
         self.retry_button.clicked.connect(self.load_data)
         self.retry_button.hide()
@@ -339,13 +339,21 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.canvas)
         frame_layout.addWidget(self.pages)
         map_area.addWidget(frame)
-        content.addLayout(map_area, 1)
+        return map_area
 
+    def build_layers_sidebar(self):
         self.layers_sidebar, layers_tabs = tabbed_sidebar('LayersSidebar')
+        self.layer_panel = LayerPanel()
         layers_tabs.addTab(self.layer_panel, 'Warstwy')
-        content.addWidget(self.layers_sidebar)
-        outer.addLayout(content, 1)
+        self.layer_panel.changed.connect(self.update_map_layers)
+        self.layer_panel.import_files.connect(self.pick_shape_files)
+        self.layer_panel.import_folder.connect(self.pick_shape_folder)
+        self.layer_panel.create_points.connect(self.prompt_point_layer)
+        self.layer_panel.digitize.connect(self.toggle_digitize)
+        self.layer_panel.list.currentRowChanged.connect(self.point_selection_changed)
+        return self.layers_sidebar
 
+    def build_footer(self):
         footer = QFrame()
         footer.setObjectName('Footer')
         footer.setFixedHeight(34)
@@ -361,9 +369,9 @@ class MainWindow(QMainWindow):
         footer_layout.addSpacing(24)
         self.scale_label = label('Skala —', 'Small')
         footer_layout.addWidget(self.scale_label)
-        outer.addWidget(footer)
         self.canvas.xyCoordinates.connect(self.show_coordinates)
         self.canvas.scaleChanged.connect(lambda scale: self.scale_label.setText(f'Skala 1 : {integer(round(scale))}'))
+        return footer
 
     def build_toolbar(self):
         toolbar = QToolBar('Narzędzia mapy', self)
